@@ -1,5 +1,7 @@
 # Job Apply Bot
 
+> **Created by [MiFactory](https://mifactory.ma) · concept & design: [mifactory.ma](https://mifactory.ma)** · free & open source (MIT)
+
 Desktop app (Python + Playwright + Qt) that **reads job offers on LinkedIn and Indeed in a real Chrome window and applies for you** — using your CV, your search criteria and a growing list of automatic answers. Anything it cannot answer it asks you once, remembers it, and reuses it in every later application. It stops by itself at the platform's limit.
 
 > ⚠️ Automating LinkedIn / Indeed is against their terms of service. Your account can be limited or banned. Use it at your own risk, with moderate volumes (20–40 applications a day), and only for your own applications. The bot never types or stores your password and never bypasses CAPTCHAs or security checks.
@@ -56,6 +58,17 @@ python main.py report                                                    # statu
 python main.py --profile "Alex" run                                      # pick a profile
 ```
 
+## Scheduling & automatic retry
+
+Run every chosen weekday at a set hour, and keep going after a LinkedIn limit without you.
+
+* **GUI:** tick **⏰ Schedule** (centre panel), choose the days, the hour and the retry interval (default 5 min). The status line shows the next run. Keep the window open and the PC awake.
+* **CLI (no window to watch):** `python main.py schedule --days mon-fri --time 09:00 --retry 5 [--max 30] [--now]` (settings are saved per profile in `data/profiles/<name>/schedule.json`, shared with the GUI).
+* **LinkedIn limit:** the run stops, then the bot tests again every N minutes (a normal run that stops at once while the limit is active) and continues by itself as soon as applying works again. It gives up after 48 h and waits for the next scheduled day.
+* **Your own daily cap** (`max_applications_per_day`) is not retried until the next scheduled day. **⏹ Stop** cancels the current retry cycle.
+* Scheduled runs are unattended: unknown form questions are not asked, they are added in red to the right-hand list (answer them later; they are reused). A login or security check still pauses and waits for you.
+* A run is only started while the app (or `main.py schedule`) is running: nothing happens if the PC is off.
+
 ## Project layout
 
 ```
@@ -92,6 +105,10 @@ Everything personal lives in `data/` (git-ignored): `data/profiles/<name>/{profi
 - LinkedIn and Indeed change their pages regularly: if clicks fail, fix the selectors in `jobbot/linkedin.py` / `jobbot/indeed.py` (one place per site).
 - Indeed applications that redirect to a company site are skipped.
 - Embedding Chrome inside the window is Windows-only; other systems use a separate window.
+
+## Credits
+
+**Job Apply Bot** was created by **MiFactory — [mifactory.ma](https://mifactory.ma)**, who also made the concept and the design of the app. Please keep this credit when you share or fork it (the MIT licence requires keeping the copyright notice).
 
 ## License
 

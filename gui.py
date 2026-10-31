@@ -1,4 +1,4 @@
-"""Job Apply Bot — GUI.
+"""Job Apply Bot — GUI.   Created by MiFactory (mifactory.ma) — concept & design: mifactory.ma.
 Left   : drop your CVs (any language) + default motivation message per language + search settings
 Centre : the browser (embedded Chromium) the bot drives, with log
 Right  : every parameter / filter / question the bot answers automatically; unknown questions are added here,
@@ -11,10 +11,12 @@ from PySide6.QtCore import Qt, QObject, Signal, QTimer
 from PySide6.QtGui import QColor, QWindow
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QTabWidget, QLabel,
     QPushButton, QLineEdit, QPlainTextEdit, QTextEdit, QTableWidget, QTableWidgetItem, QComboBox, QSpinBox, QCheckBox,
-    QFileDialog, QMessageBox, QHeaderView, QFrame, QDialog, QFormLayout, QAbstractItemView, QSlider, QScrollArea)
+    QFileDialog, QMessageBox, QHeaderView, QFrame, QDialog, QFormLayout, QAbstractItemView, QSlider, QScrollArea, QTimeEdit)
+from PySide6.QtCore import QTime
 
-from jobbot import profile as P, store, cv_analyzer, profiles
+from jobbot import profile as P, store, cv_analyzer, profiles, scheduler as SCH
 from jobbot import browser as B
+from jobbot import __version__, CREDIT_URL
 
 ROOT = pathlib.Path(__file__).resolve().parent
 DATA = P.DATA
@@ -43,7 +45,7 @@ PARAM_LABELS = [  # (profile key, label shown to the user)
 
 
 def load_motivation():
-    m = json.loads(motiv_path().read_text(encoding="utf-8")) if motiv_path().exists() else {}
+    m = P.read_json(motiv_path(), {})
     for k, v in DEFAULT_MOTIVATION.items(): m.setdefault(k, v)
     return m
 
@@ -97,8 +99,9 @@ class BrowserThread(threading.Thread):
                         if cmd[0] == "goto": b.live_page().goto(cmd[1])
                         elif cmd[0] == "fn": cmd[1](b.live_page())
                         elif cmd[0] == "run":
-                            sites, mx, dry, mot = cmd[1:]
-                            n = run_jobs(b.live_page(), self.win.prof, self.win.crit, sites, mx, dry, True, self.win.worker_ask, mot)
+                            sites, mx, dry, mot, auto = (list(cmd[1:]) + [False])[:5]
+                            # scheduled (unattended) run: never wait for answers — unknown questions go to the right-hand list
+                            n = run_jobs(b.live_page(), self.win.prof, self.win.crit, sites, mx, dry, not auto, None if auto else self.win.worker_ask, mot)
                             br.finished.emit(n)
                     except Exception as e:
                         br.error.emit(f"{type(e).__name__}: {str(e)[:300]}")
@@ -141,7 +144,7 @@ class Window(QMainWindow):
     def __init__(self):
         super().__init__()
         profiles.migrate(); profiles.activate(profiles.active())
-        self.setWindowTitle(f"Job Apply Bot v8 — {profiles.active()}"); self.resize(1700, 950)
+        self.setWindowTitle(f"Job Apply Bot {__version__} — {profiles.active()}"); self.resize(1700, 950)
         self.prof, self.crit, self.motiv = P.load_profile(), P.load_criteria(), load_motivation()
         self.bridge = Bridge(); self.bridge.log.connect(self.append_log); self.bridge.ask.connect(self.on_ask)
         self.bridge.pause.connect(self.on_pause); self.bridge.finished.connect(self.on_finished); self.bridge.error.connect(self.on_error); self.bridge.ready.connect(self.on_ready); self.bridge.reopen.connect(self.open_browser)
@@ -154,7 +157,9 @@ class Window(QMainWindow):
         split.setStretchFactor(1, 1); split.setSizes([400, 800, 480]); self.split = split; self.zoom_pct = 100
         self.dock_timer = QTimer(self); self.dock_timer.timeout.connect(self.dock_tick); self.dock_timer.start(120)
         B.HOOKS["log"] = lambda m: self.bridge.log.emit(str(m)); B.HOOKS["pause"] = self.worker_pause
-        self.refresh_table(); self.refresh_cvs()
+        cl = QLabel(f"Job Apply Bot {__version__} · created by <a href='{CREDIT_URL}'>MiFactory — mifactory.ma</a> · concept &amp; design: mifactory.ma")
+        cl.setOpenExternalLinks(True); cl.setStyleSheet("color:#555;padding:2px 8px"); self.statusBar().addPermanentWidget(cl)
+        self.refresh_table(); self.refresh_cvs(); self.sch_load()
         QTimer.singleShot(500, self.open_browser)
 
     # ----------------------------------------------------------- LEFT: CVs, motivation, search
@@ -241,28 +246,48 @@ class Window(QMainWindow):
             pb_ = QPushButton(txt); pb_.clicked.connect(fn); prow.addWidget(pb_)
         prow.addStretch(); v.addLayout(prow); self.fill_profiles(); self.pcombo.activated.connect(lambda i: self.switch_profile(self.pcombo.itemText(i)))
         bar = QHBoxLayout()
-        self.start_b = QPushButton("▶ Start applying"); self.start_b.setStyleSheet("background:#1b7f3b;color:white;font-weight:bold;padding:6px 14px")
+        self.start_b = QPushButton("▶ Start applying"); self.start_b.setStyleSheet("background:#1b7f3b;color:white;font-weight:bold;padding:6px 14px"); self.start_b.setMinimumWidth(140)
         self.stop_b = QPushButton("⏹ Stop"); self.stop_b.setEnabled(False); self.stop_b.setStyleSheet("padding:6px 14px")
         self.start_b.clicked.connect(self.start); self.stop_b.clicked.connect(self.stop)
         bar.addWidget(self.start_b); bar.addWidget(self.stop_b)
+        bar3_widgets = []
         for txt, url in (("LinkedIn", "https://www.linkedin.com/login"), ("Indeed", "https://secure.indeed.com/auth?hl=fr_BE"), ("Google", "https://accounts.google.com/")):
-            b = QPushButton(f"🔑 {txt}"); b.clicked.connect(lambda _=False, u=url: self.goto(u)); bar.addWidget(b)
+            b = QPushButton(f"🔑 {txt}"); b.clicked.connect(lambda _=False, u=url: self.goto(u)); bar3_widgets.append(b)
         self.tl = QPushButton("◧ Left"); self.tl.setCheckable(True); self.tl.setChecked(True); self.tl.toggled.connect(lambda on: self.left.setVisible(on))
         self.tr = QPushButton("Right ◨"); self.tr.setCheckable(True); self.tr.setChecked(True); self.tr.toggled.connect(lambda on: self.right.setVisible(on))
         bar2 = QHBoxLayout(); bar2.addWidget(QLabel("View:")); bar2.addWidget(self.tl); bar2.addWidget(self.tr)
         zm = QPushButton("🔍−"); zp = QPushButton("🔍+"); self.zl = QLabel("100%"); zm.setFixedWidth(40); zp.setFixedWidth(40)
         zm.clicked.connect(lambda: self.zoom(-10)); zp.clicked.connect(lambda: self.zoom(+10)); self.zl.mouseDoubleClickEvent = lambda e: self.zoom(0)
         bar2.addSpacing(12); bar2.addWidget(QLabel("Zoom:")); bar2.addWidget(zm)
-        self.zs = QSlider(Qt.Horizontal); self.zs.setRange(30, 250); self.zs.setValue(100); self.zs.setFixedWidth(110); self.zs.setToolTip("Zoom the web page")
+        self.zs = QSlider(Qt.Horizontal); self.zs.setRange(30, 250); self.zs.setValue(100); self.zs.setFixedWidth(90); self.zs.setToolTip("Zoom the web page")
         self.zs.valueChanged.connect(lambda v: self.zoom(v - self.zoom_pct)); bar2.addWidget(self.zs); bar2.addWidget(self.zl); bar2.addWidget(zp)
         bar2.addSpacing(12); bar2.addWidget(QLabel("Centre:"))
-        self.ps = QSlider(Qt.Horizontal); self.ps.setRange(0, 100); self.ps.setValue(50); self.ps.setFixedWidth(130)
+        self.ps = QSlider(Qt.Horizontal); self.ps.setRange(0, 100); self.ps.setValue(50); self.ps.setFixedWidth(100)
         self.ps.setToolTip("Slide to move the browser left / right (shifts the space between the left and right panels)"); self.ps.valueChanged.connect(self.slide_center)
         bar2.addWidget(QLabel("◀")); bar2.addWidget(self.ps); bar2.addWidget(QLabel("▶"))
-        rb = QPushButton("🔄 Reopen browser"); rb.clicked.connect(self.reopen_browser); bar.addWidget(rb)
+        rb = QPushButton("🔄 Reopen browser"); rb.clicked.connect(self.reopen_browser); bar3_widgets.append(rb)
+        ab = QPushButton("ℹ About"); ab.clicked.connect(self.about); bar3_widgets.append(ab)
         bar.addStretch(); v.addLayout(bar); bar2.addSpacing(12)
         self.embed_cb = QComboBox(); self.embed_cb.addItems(["Inside (child)", "Docked (follows window)", "Separate window"]); self.embed_cb.setCurrentIndex(0 if sys.platform == "win32" else 2)
-        self.embed_cb.setToolTip("How the browser is shown. Press 🔄 Reopen browser after changing."); self.embedded = False; bar2.addWidget(QLabel("Browser:")); bar2.addWidget(self.embed_cb); bar2.addStretch(); v.addLayout(bar2)
+        self.embed_cb.setToolTip("How the browser is shown. Press 🔄 Reopen browser after changing."); self.embedded = False; bar2.addStretch(); v.addLayout(bar2)
+        bar3 = QHBoxLayout()
+        for w_ in bar3_widgets: bar3.addWidget(w_)
+        bar3.addWidget(QLabel("Browser:")); bar3.addWidget(self.embed_cb); bar3.addStretch(); v.addLayout(bar3)
+        # ---- schedule (2 compact rows)
+        sr = QHBoxLayout(); self.sch_on = QCheckBox("⏰ Schedule"); self.sch_on.setMinimumWidth(100)
+        self.sch_on.setToolTip("Start automatically on the chosen days at the chosen hour. Keep this window open and the PC awake.")
+        sr.addWidget(self.sch_on); self.sch_days = []
+        for i, n_ in enumerate(SCH.DAY_NAMES):
+            c = QCheckBox(n_); self.sch_days.append(c); sr.addWidget(c)
+        self.sch_time = QTimeEdit(QTime(9, 0)); self.sch_time.setDisplayFormat("HH:mm"); sr.addWidget(QLabel("at")); sr.addWidget(self.sch_time); sr.addStretch(); v.addLayout(sr)
+        sr2 = QHBoxLayout(); self.sch_retry = QSpinBox(); self.sch_retry.setRange(1, 120); self.sch_retry.setValue(5); self.sch_retry.setSuffix(" min")
+        self.sch_retry.setToolTip("After a LinkedIn limit: test again every N minutes until the restriction is lifted, then continue automatically.")
+        sr2.addWidget(QLabel("After a LinkedIn limit, test again every")); sr2.addWidget(self.sch_retry)
+        self.sch_lbl = QLabel("Schedule off"); self.sch_lbl.setStyleSheet("color:#555"); sr2.addSpacing(12); sr2.addWidget(self.sch_lbl, 1); v.addLayout(sr2)
+        for w_ in [self.sch_on, self.sch_time, self.sch_retry] + self.sch_days:
+            (w_.toggled if isinstance(w_, QCheckBox) else w_.timeChanged if isinstance(w_, QTimeEdit) else w_.valueChanged).connect(lambda *_: self.sch_changed())
+        self.sched = None; self._auto_run = False; self._sch_loading = False
+        self.sch_timer = QTimer(self); self.sch_timer.timeout.connect(self.sch_tick); self.sch_timer.start(15000)
         self.host = QWidget(); self.host_l = QVBoxLayout(self.host); self.host_l.setContentsMargins(0, 0, 0, 0)
         self.host_info = QLabel("Starting browser…"); self.host_info.setAlignment(Qt.AlignCenter); self.host_l.addWidget(self.host_info)
         v.addWidget(self.host, 1)
@@ -271,6 +296,12 @@ class Window(QMainWindow):
         self.pause_box.hide(); v.addWidget(self.pause_box)
         self.logw = QPlainTextEdit(); self.logw.setReadOnly(True); self.logw.setMaximumHeight(170); v.addWidget(self.logw)
         return w
+
+    def about(self):
+        QMessageBox.about(self, "About Job Apply Bot", f"<h3>Job Apply Bot {__version__}</h3><p>Created by <b><a href='{CREDIT_URL}'>MiFactory — mifactory.ma</a></b><br>"
+                          f"Concept &amp; design: mifactory.ma</p><p>Free and open source (MIT licence): use it, change it, share it.<br>"
+                          f"<a href='https://github.com/MiFactory/job-apply-bot'>github.com/MiFactory/job-apply-bot</a></p>"
+                          f"<p><small>Automating LinkedIn / Indeed is against their terms of service — use at your own risk.</small></p>")
 
     def append_log(self, m): self.logw.appendPlainText(m)
 
@@ -322,14 +353,14 @@ class Window(QMainWindow):
 
     def load_profile_into_ui(self):
         self.prof, self.crit, self.motiv = P.load_profile(), P.load_criteria(), load_motivation()
-        self.fill_profiles(); self.setWindowTitle(f"Job Apply Bot v8 — {profiles.active()}")
+        self.fill_profiles(); self.setWindowTitle(f"Job Apply Bot {__version__} — {profiles.active()}")
         self.titles.setPlainText("\n".join(self.crit["titles"])); self.locs.setPlainText("\n".join(self.crit["locations"]))
         self.excl.setPlainText(", ".join(self.crit["exclude"])); self.must.setText(", ".join(self.crit["must_have_any"]))
         self.days.setValue(self.crit["posted_within_days"]); self.easy.setChecked(self.crit["easy_apply_only"])
         self.cb_li.setChecked("linkedin" in self.crit["sites"]); self.cb_in.setChecked("indeed" in self.crit["sites"])
         self.def_lang.setCurrentText(self.prof.get("default_cv_lang", "en"))
         self._mot_cur = "en"; self.mot_lang.blockSignals(True); self.mot_lang.setCurrentText("en"); self.mot_lang.blockSignals(False); self.mot_edit.setPlainText(self.motiv.get("en", ""))
-        self.refresh_cvs(); self.refresh_table(); self.logw.clear(); self.append_log(f"👤 profile '{profiles.active()}' loaded")
+        self.refresh_cvs(); self.refresh_table(); self.sch_load(); self.logw.clear(); self.append_log(f"👤 profile '{profiles.active()}' loaded")
 
     def embed_mode(self): return self.embed_cb.currentIndex()      # 0 child, 1 docked, 2 separate
 
@@ -477,21 +508,61 @@ class Window(QMainWindow):
         if kind in ("learned", "unanswered"):
             d = store.load_answers(); d.pop(store.norm(self.table.item(r, 0).text()), None); store.ANSWERS.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8"); self.refresh_table()
 
-    # ----------------------------------------------------------- bot worker
-    def start(self):
-        self.save_left(silent=True); self.save_search()
-        if not self.crit["titles"]: return QMessageBox.warning(self, "Job Apply Bot", "Add at least one job title (Search criteria tab).")
-        if not any(self.prof["cv_files"].values()): return QMessageBox.warning(self, "Job Apply Bot", "Drop at least one CV first.")
+    # ----------------------------------------------------------- schedule
+    def sch_load(self):
+        """Fill the schedule row from schedule.json of the active profile and (re)arm the scheduler."""
+        d = SCH.load(); self._sch_loading = True
+        self.sch_on.setChecked(d["enabled"]); self.sch_time.setTime(QTime(*[int(x) for x in d["time"].split(":")])); self.sch_retry.setValue(int(d["retry_minutes"]))
+        for i, c in enumerate(self.sch_days): c.setChecked(i in d["days"])
+        self._sch_loading = False; self.sched = SCH.Scheduler(d); self.sch_status()
+
+    def sch_changed(self):
+        if self._sch_loading: return
+        d = SCH.load(); d.update(enabled=self.sch_on.isChecked(), days=[i for i, c in enumerate(self.sch_days) if c.isChecked()],
+                                 time=self.sch_time.time().toString("HH:mm"), retry_minutes=self.sch_retry.value(), max_per_run=self.maxrun.value())
+        SCH.save(d); self.sched = SCH.Scheduler(d); self.sch_status()
+
+    def sch_status(self): self.sch_lbl.setText(("⏰ " if self.sched and self.sched.s["enabled"] else "") + (self.sched.status() if self.sched else "Schedule off"))
+
+    def sch_tick(self):
+        if not self.sched: return
+        self.sch_status()
+        if not self.sched.due(): return
+        if not self.start_b.isEnabled(): return                       # a run is already going
         if not self.bthread or not self.bthread.is_alive():
-            return QMessageBox.information(self, "Job Apply Bot", "The browser is closed. Click 🔄 Reopen browser, wait for 'browser ready', then press Start again.")
+            if not getattr(self, "_sch_warned", False): self.append_log("⏰ Scheduled run waiting: the browser is closed — click 🔄 Reopen browser."); self._sch_warned = True
+            return
+        self._sch_warned = False
+        if not self.crit["titles"] or not any(self.prof["cv_files"].values()):
+            self.append_log("⏰ Scheduled run skipped: add job titles and at least one CV."); self.sched.on_result("finished"); return
+        self.append_log("⏰ Scheduled start" + (" (testing if the LinkedIn limit is lifted)" if self.sched.state == "retry" else ""))
+        self.start(auto=True)
+
+    # ----------------------------------------------------------- bot worker
+    def start(self, auto=False):
+        self._auto_run = bool(auto)
+        self.save_left(silent=True); self.save_search()
+        def warn(msg):          # scheduled (unattended) starts must never open a modal dialog nobody is there to close
+            if auto: self.append_log("⏰ Scheduled run skipped: " + msg)
+            else: QMessageBox.warning(self, "Job Apply Bot", msg)
+        if not self.crit["titles"]: return warn("add at least one job title (Search criteria tab).") or False
+        if not any(self.prof["cv_files"].values()): return warn("drop at least one CV first.") or False
+        if not self.bthread or not self.bthread.is_alive():
+            return warn("the browser is closed. Click 🔄 Reopen browser, wait for 'browser ready', then press Start again.") or False
         B.HOOKS["stop"] = False; self.start_b.setEnabled(False); self.stop_b.setEnabled(True)
         sites = self.crit["sites"]; mx = self.maxrun.value(); dry = self.dry.isChecked()
         mot = dict(self.motiv)
         self.append_log(f"▶ start — sites={sites} max={mx} dry_run={dry}")
-        self.bthread.q.put(("run", sites, mx, dry, dict(self.motiv)))
+        self.bthread.q.put(("run", sites, mx, dry, dict(self.motiv), bool(auto)))
 
     def stop(self): B.HOOKS["stop"] = True; self.append_log("⏹ stopping after the current job…"); self.resume(); self.answer_skip()
-    def on_finished(self, n): self.append_log(f"✔ finished — {n} application(s)"); self.start_b.setEnabled(True); self.stop_b.setEnabled(False); self.refresh_table()
+    def on_finished(self, n):
+        from jobbot.runner import last_result
+        res = last_result(); self.append_log(f"✔ finished — {n} application(s) ({res})"); self.start_b.setEnabled(True); self.stop_b.setEnabled(False); self.refresh_table()
+        if self.sched and self.sched.s["enabled"]:
+            self.sched.on_result(res)
+            if res == "limit": self.append_log(f"⏳ LinkedIn limit — I will test again in {self.sched.s['retry_minutes']} min and continue by myself.")
+            self.sch_status()
     def on_error(self, m):
         if self.embedded and "closed" in m.lower():
             self.append_log("⚠ Chrome closed while embedded as a child — switching to 'Docked' mode (browser follows this window).")
