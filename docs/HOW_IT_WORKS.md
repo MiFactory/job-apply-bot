@@ -52,6 +52,9 @@ Never ticked: "follow company", newsletters, marketing, job alerts. Consent boxe
 * **Separate window** — plain Chrome window (default on Linux/macOS).
 * The page is rendered with `no_viewport=True` so it fills the panel. Page zoom uses CSS `zoom` (stored per site in `localStorage`).
 
+## Scheduler (`scheduler.py`)
+A small state machine (`Scheduler`) used by the GUI (15 s timer) and by `main.py schedule` (20 s loop). States: *idle* (waiting for the next chosen weekday/hour) and *retry* (LinkedIn limit hit: next test at now + N min). The site modules record how a run ended in `HOOKS["result"]` (`limit`, `quota`, `stopped`, or empty = finished): `limit` → retry, `quota`/finished → next scheduled day, `stopped` (user pressed Stop) → never auto-restart in the same cycle. Retries stop after `retry_max_hours` (48).
+
 ## Safety design
 
 * Login is always done by the user in the browser (password never typed or stored by the bot).

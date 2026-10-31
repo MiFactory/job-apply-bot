@@ -51,3 +51,15 @@ All files are per profile: `data/profiles/<name>/`. Examples with fictive data: 
 ## applications.csv
 
 `date;site;job_id;title;company;location;url;status;note` — `;`-separated for Excel (FR).
+
+## schedule.json
+Per profile (`data/profiles/<name>/schedule.json`), written by the GUI or `main.py schedule`.
+
+| Key | Meaning |
+|---|---|
+| `enabled` | Schedule on/off |
+| `days` | Weekdays, `0` = Monday … `6` = Sunday |
+| `time` | Start hour, `"HH:MM"`, local time |
+| `retry_minutes` | After a LinkedIn limit, test again every N minutes (default 5) |
+| `retry_max_hours` | Stop retrying after this long (default 48), then wait for the next scheduled day |
+| `max_per_run` | Applications per run |
