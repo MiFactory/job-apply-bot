@@ -1,0 +1,10 @@
+# personal data — NEVER commit
+data/
+*.csv
+browser_profile/
+qt_profile/
+__pycache__/
+*.pyc
+.venv/
+*.pdf
+*.docx
