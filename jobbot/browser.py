@@ -33,7 +33,7 @@ class Browser:
         try: self.pw.stop()
         except Exception: pass
 
-HOOKS = {"pause": None, "stop": False, "log": print}
+HOOKS = {"pause": None, "stop": False, "log": print, "result": ""}   # result: "", "limit", "quota", "stopped" (set by the site modules)
 
 def should_stop(): return HOOKS["stop"]
 

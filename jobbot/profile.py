@@ -33,10 +33,26 @@ DEFAULT_CRITERIA = {
 }
 
 
+def read_json(path, default):
+    """Tolerant JSON read: UTF-8 BOM (Windows Notepad), empty/corrupt/non-object files never crash the app.
+    A corrupt file is kept as <name>.bad (so nothing is lost) and the default is returned."""
+    path = pathlib.Path(path)
+    if not path.exists(): return default
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        if isinstance(data, dict): return data
+        raise ValueError("JSON root is not an object")
+    except Exception as e:
+        try:
+            bad = path.with_suffix(path.suffix + ".bad"); bad.write_bytes(path.read_bytes())
+        except Exception: pass
+        print(f"⚠ {path.name} is not valid JSON ({type(e).__name__}) — using defaults; a copy was saved as {path.name}.bad")
+        return default
+
+
 def load(path, default):
     d = json.loads(json.dumps(default))
-    if path.exists():
-        d.update(json.loads(path.read_text(encoding="utf-8")))
+    d.update(read_json(path, {}))
     return d
 
 

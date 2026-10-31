@@ -1,5 +1,7 @@
 """Persistence: applications log (CSV ';'), answers memory, pending questions."""
-import csv, json, re, datetime, pathlib
+import csv, json, re, datetime, pathlib, threading
+
+_LOCK = threading.RLock()      # the GUI thread and the bot thread both write these files
 
 DATA = pathlib.Path(__file__).resolve().parent.parent / "data"
 DATA.mkdir(exist_ok=True)
@@ -34,10 +36,11 @@ def seen_jobs():
 
 
 def log_application(site, job_id, title, company, location, url, status, note=""):
-    _write_header(APPS, FIELDS)
-    with open(APPS, "a", newline="", encoding="utf-8-sig") as f:
-        csv.writer(f, delimiter=";").writerow(
-            [datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), site, job_id, title, company, location, url, status, note])
+    with _LOCK:
+        _write_header(APPS, FIELDS)
+        with open(APPS, "a", newline="", encoding="utf-8") as f:       # header already carries the BOM; appending must not add another
+            csv.writer(f, delimiter=";").writerow(
+                [datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), site, job_id, title, company, location, url, status, note])
 
 
 def count_today(status="APPLIED"):
@@ -49,17 +52,20 @@ def count_today(status="APPLIED"):
 
 
 def load_answers():
-    return json.loads(ANSWERS.read_text(encoding="utf-8")) if ANSWERS.exists() else {}
+    from .profile import read_json
+    return read_json(ANSWERS, {})
 
 
 def save_answer(question, answer):
-    a = load_answers()
-    a[norm(question)] = answer
-    ANSWERS.write_text(json.dumps(a, indent=2, ensure_ascii=False), encoding="utf-8")
+    with _LOCK:
+        a = load_answers()
+        a[norm(question)] = answer
+        ANSWERS.write_text(json.dumps(a, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def log_pending(site, title, company, question, url):
-    _write_header(PENDING, ["date", "site", "title", "company", "question", "url"])
-    with open(PENDING, "a", newline="", encoding="utf-8-sig") as f:
-        csv.writer(f, delimiter=";").writerow(
-            [datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), site, title, company, question, url])
+    with _LOCK:
+        _write_header(PENDING, ["date", "site", "title", "company", "question", "url"])
+        with open(PENDING, "a", newline="", encoding="utf-8") as f:
+            csv.writer(f, delimiter=";").writerow(
+                [datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), site, title, company, question, url])

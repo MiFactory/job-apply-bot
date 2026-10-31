@@ -3,7 +3,8 @@ from . import store, profile as P
 from .browser import human_check, pause_for_human, login_with_google, should_stop, HOOKS
 from .formfiller import Filler, NeedInfo
 
-LIMIT_RE = re.compile(r"(daily|weekly)? ?limit|limite|reached the .*limit|atteint la limite|too many|trop de candidatures|nombre maximum", re.I)
+LIMIT_RE = re.compile(r"(daily|weekly|easy apply|application)s? limit|limit(e|s)? (has been |was )?reached|reached (the |your |today.s )?(daily |weekly )?(easy apply |application )?limit"
+                      r"|limite (quotidienne|journalière|de candidatures|atteinte)|atteint (la|votre) limite|limiet (bereikt|van)|(dagelijkse|dagelijks) limiet|bereikt.{0,30}limiet", re.I)
 BTN = {
  "next": r"continue to next step|next|passer à l.étape suivante|suivant|volgende",
  "review": r"review your application|vérifier votre candidature|review|controleren",
@@ -46,12 +47,14 @@ def read_detail(page):
     desc = g("#job-details, .jobs-description__content, .jobs-box__html-content")
     return title, company, loc.split("·")[0].strip(), desc
 
-def click_btn(modal, key):
+def click_btn(modal, key, click=True):
+    """Find the visible button for `key`; click it unless click=False (used by --dry-run: look, never press Submit)."""
     for b in modal.locator("button").all():
         try:
             t = ((b.get_attribute("aria-label") or "") + " " + b.inner_text()).strip()
             if re.search(BTN[key], t, re.I) and b.is_visible() and b.is_enabled():
-                b.click(); return True
+                if click: b.click()
+                return True
         except Exception: pass
     return False
 
@@ -72,12 +75,12 @@ def easy_apply(page, filler, resume_path, dry_run):
                 if cb.is_checked() and re.search(r"follow|suivre|volgen", cb.evaluate("e=>e.closest('div').innerText").lower()):
                     cb.uncheck(force=True)
             except Exception: pass
+        if dry_run and click_btn(modal, "submit", click=False):
+            return "DRY_RUN", "stopped before final submit"          # the Submit button is only LOOKED AT, never pressed
         if click_btn(modal, "submit"):
-            if dry_run:
-                return "DRY_RUN", "stopped before final submit"
             page.wait_for_timeout(2500)
             body = page.inner_text("body")
-            if LIMIT_RE.search(body[:3000]) and "limit" in body.lower(): raise LimitReached("limit message after submit")
+            if LIMIT_RE.search(body[:3000]): raise LimitReached("limit message after submit")
             try: page.locator("button[aria-label*=Dismiss], button[aria-label*=Ignorer], button:has-text('Done'), button:has-text('Terminé')").first.click(timeout=2000)
             except Exception: pass
             return "APPLIED", ""
@@ -108,8 +111,9 @@ def run(page, profile, criteria, max_apps, dry_run, interactive, asker=None, mot
                 n = cards.count()
                 if n == 0: break
                 for i in range(n):
-                    if should_stop(): HOOKS["log"]("⏹ stopped by user"); return done
+                    if should_stop(): HOOKS["result"] = "stopped"; HOOKS["log"]("⏹ stopped by user"); return done
                     if done >= max_apps or store.count_today() >= criteria["max_applications_per_day"]:
+                        if store.count_today() >= criteria["max_applications_per_day"]: HOOKS["result"] = "quota"
                         HOOKS["log"]("✅ daily/run quota reached"); return done
                     try:
                         card = cards.nth(i); jid = card.get_attribute("data-occludable-job-id") or card.get_attribute("data-job-id") or str(i)
@@ -138,7 +142,7 @@ def run(page, profile, criteria, max_apps, dry_run, interactive, asker=None, mot
                         store.log_application("linkedin", jid, title, company, loc_txt, url, status, note); seen.add(("linkedin", jid))
                         if status in ("APPLIED", "DRY_RUN"): done += 1; HOOKS["log"](f"   ✅ applied ({done})"); page.wait_for_timeout(2500)
                     except LimitReached as e:
-                        HOOKS["log"](f"🛑 LinkedIn limit reached: {e}. Stopping — try again tomorrow."); return done
+                        HOOKS["result"] = "limit"; HOOKS["log"](f"🛑 LinkedIn limit reached: {e}. Run stopped (a schedule retries automatically)."); return done
                     except Exception as e:
                         HOOKS["log"](f"   ⚠ {type(e).__name__}: {str(e)[:100]}"); discard(page)
     return done

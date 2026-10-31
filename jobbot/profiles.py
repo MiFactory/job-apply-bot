@@ -27,7 +27,7 @@ def migrate():
     """First start with the old single-profile layout: move it into profiles/<first name>."""
     PROFILES.mkdir(parents=True, exist_ok=True)
     if list_profiles() or not (DATA / "profile.json").exists(): return
-    try: name = safe(json.loads((DATA / "profile.json").read_text(encoding="utf-8")).get("first_name") or "default")
+    try: name = safe(P.read_json(DATA / "profile.json", {}).get("first_name") or "default")
     except Exception: name = "default"
     d = PROFILES / name; d.mkdir(parents=True, exist_ok=True)
     for f in COPY_FILES + ["applications.csv", "pending_questions.csv", "browser_profile"]:

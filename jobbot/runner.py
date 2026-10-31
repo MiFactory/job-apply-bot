@@ -11,11 +11,18 @@ def resolve_cvs(prof):
     return prof
 
 def run_jobs(page, prof, crit, sites, max_apps, dry_run, interactive=True, asker=None, motivation=None):
-    prof = resolve_cvs(prof); total = 0
+    from .browser import HOOKS
+    HOOKS["result"] = ""; prof = resolve_cvs(prof); total = 0
     if "linkedin" in sites:
         from . import linkedin
         total += linkedin.run(page, prof, crit, max_apps, dry_run, interactive, asker, motivation)
-    if "indeed" in sites and total < max_apps:
+    if "indeed" in sites and total < max_apps and HOOKS["result"] != "stopped":
         from . import indeed
         total += indeed.run(page, prof, crit, max_apps - total, dry_run, interactive, asker, motivation)
     return total
+
+
+def last_result():
+    """How the last run ended: 'limit' | 'quota' | 'stopped' | 'finished'."""
+    from .browser import HOOKS
+    return HOOKS["result"] or "finished"

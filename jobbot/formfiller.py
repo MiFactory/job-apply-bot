@@ -15,22 +15,22 @@ def rules(p):
      (r"first name|prénom|voornaam", p["first_name"]),
      (r"last name|family name|surname|nom de famille|achternaam", p["last_name"]),
      (r"^(full )?name$|^nom( complet)?$", f'{p["first_name"]} {p["last_name"]}'.strip()),
-     (r"e-?mail", p["email"]),
+     (r"^(your |votre |uw |contact )?(primary )?e-?mail( address| adres)?[\s\*\?:]*$|e-?mail address|adresse e-?mail|e-?mailadres", p["email"]),
      (r"country code|indicatif|code pays|landcode", p["phone_country_code"]),
-     (r"phone|mobile|téléphone|telefoon|gsm", ph),
-     (r"postal|zip|code postal|postcode", p["postal_code"]),
-     (r"city|ville|stad|location \(city\)|town", p["city"]),
+     (r"phone|mobile (phone )?number|^mobile$|téléphone|telefoon|\bgsm\b", ph),
+     (r"postal|\bzip\b|code postal|postcode", p["postal_code"]),
+     (r"^(current )?(city|ville|stad|town)\b.{0,25}$|location \(city\)|^city\b", p["city"]),
      (r"linkedin", p["linkedin_url"]),
      (r"website|portfolio|site web", p["website"] or p["linkedin_url"]),
-     (r"headline|titre", p["headline"]),
-     (r"notice|préavis|opzeg|disponib|available|start date|date de début", p["notice_period"]),
-     (r"salary.*(month|mois|maand)|(month|mois|maand).*salary|salaire.*mensuel", str(p["salary_month_eur"])),
-     (r"salary|salaire|loon|rémunération|compensation|expected", str(p["salary_year_eur"])),
+     (r"^headline|^titre\b|professional headline", p["headline"]),
+     (r"notice period|notice|préavis|opzegtermijn|disponibilit|availability|available (from|as of|starting)|earliest start|start date|date de début|when can you start", p["notice_period"]),
+     (r"salary.*(month|mois|maand)|(month|mois|maand).*salary|salaire.*mensuel|maandloon|maandsalaris|bruto ?maand", str(p["salary_month_eur"])),
+     (r"salary|salaire|\bloon\b|jaarloon|jaarsalaris|salaris|rémunération|compensation|expected (annual|yearly|gross|base|pay)", str(p["salary_year_eur"])),
      (r"sponsor", "no" if not p["needs_sponsorship"] else "yes"),
      (r"authori[sz]ed|legally|right to work|work permit|permis de travail|autorisé|eligible to work", "yes" if p["authorized_to_work"] else "no"),
      (r"relocat|déménag|verhuizen", "yes" if p["willing_relocate"] else "no"),
-     (r"driv|permis de conduire|rijbewijs", "yes" if p["driving_licence"] else "no"),
-     (r"degree|diploma|diplôme|bachelor|master|education level|niveau d.étude", "yes"),
+     (r"driv(er|ing).{0,20}licen|licen.{0,20}driv|permis de conduire|rijbewijs", "yes" if p["driving_licence"] else "no"),
+     (r"\bdegree\b|diploma|diplôme|\bbachelor|\bmaster.s\b|education level|niveau d.étude", "yes"),
      (r"how many years|years of (work )?experience|années d.expérience|jaren ervaring|experience.*years", None),  # handled below
     ]
 
@@ -69,6 +69,7 @@ LABEL_JS = """el => {
   if (el.id) { const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]'); s = t(l); }
   if (!s) { const lb = el.getAttribute('aria-labelledby'); if (lb) s = lb.split(' ').map(i => t(document.getElementById(i))).join(' ').trim(); }
   if (!s) s = el.getAttribute('aria-label') || '';
+  if (!s) { const w = el.closest('label'); if (w) s = t(w); }
   if (!s) { const fs = el.closest('fieldset'); if (fs) s = t(fs.querySelector('legend')) || t(fs.querySelector('span')); }
   if (!s) { const g = el.closest('[data-test-form-element], .fb-dash-form-element, .jobs-easy-apply-form-section__grouping, div'); s = g ? (g.innerText || '').split('\\n')[0] : ''; }
   if (!s) s = el.placeholder || el.name || '';
@@ -114,6 +115,7 @@ class Filler:
         if a is None and self.asker:
             a = self.asker(label, options or [], self.ctx)      # GUI: blocks until user answers in the right panel
             if a: store.save_answer(label, a)
+            else: raise NeedInfo(label)                         # "Skip this job": never type "None" into the form
         elif a is None:
             if self.c.get("ask_user_when_unknown") and self.interactive:
                 print(f"\n❓ Question in the form: {label}" + (f"\n   options: {options}" if options else ""))

@@ -31,7 +31,10 @@ def run(page, profile, criteria, max_apps, dry_run, interactive, asker=None, mot
                 cards = page.locator("div.job_seen_beacon, li div.cardOutline")
                 if cards.count() == 0: break
                 for i in range(cards.count()):
-                    if should_stop() or done >= max_apps or store.count_today() >= criteria["max_applications_per_day"]: return done
+                    if should_stop(): HOOKS["result"] = "stopped"; return done
+                    if done >= max_apps or store.count_today() >= criteria["max_applications_per_day"]:
+                        if store.count_today() >= criteria["max_applications_per_day"]: HOOKS["result"] = "quota"
+                        return done
                     try:
                         card = cards.nth(i); a = card.locator("a.jcs-JobTitle, h2 a").first
                         jid = a.get_attribute("data-jk") or a.get_attribute("id") or str(i)
