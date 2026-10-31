@@ -92,4 +92,11 @@ Everything personal lives in `data/` (git-ignored): `data/profiles/<name>/{profi
 - LinkedIn and Indeed change their pages regularly: if clicks fail, fix the selectors in `jobbot/linkedin.py` / `jobbot/indeed.py` (one place per site).
 - Indeed applications that redirect to a company site are skipped.
 - Embedding Chrome inside the window is Windows-only; other systems use a separate window.
-- No licence has been chosen yet — add one before sharing publicly.
+
+## License
+
+[MIT](LICENSE) — free for any use (personal or commercial): use, copy, modify, share. Provided "as is", without warranty. Use it responsibly and at your own risk (see the terms-of-service warning above).
+
+## Contributing
+
+Bugs and fixes are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Typical fix: update a changed selector in `jobbot/linkedin.py` / `jobbot/indeed.py`, run `python tests/test_formfiller.py`, open a pull request.
