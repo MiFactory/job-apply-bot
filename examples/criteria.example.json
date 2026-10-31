@@ -1,0 +1,16 @@
+{
+  "sites": ["linkedin", "indeed"],
+  "titles": ["Business Developer", "Account Manager", "Sales Executive", "IT Project Manager"],
+  "locations": ["Brussels, Belgium", "Belgium"],
+  "exclude": ["stage", "intern", "internship", "stagiaire", "student", "apprentice", "junior", "trainee", "alternance"],
+  "exclude_companies": ["Example Staffing Ltd"],
+  "must_have_any": [],
+  "title_must_match_any": [],
+  "posted_within_days": 30,
+  "easy_apply_only": true,
+  "min_score": 1,
+  "max_applications_per_day": 40,
+  "skip_languages": ["nl"],
+  "location_must_contain": ["belg", "brussel", "bruxel", "wallon", "vlaan", "flan", "namur", "liège", "gent", "antwerp", "leuven"],
+  "ask_user_when_unknown": true
+}

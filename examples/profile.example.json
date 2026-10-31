@@ -1,0 +1,14 @@
+{
+  "first_name": "Alex", "last_name": "Martin", "email": "alex.martin@example.com",
+  "phone": "+32400000000", "phone_country_code": "+32", "phone_national": "400000000",
+  "city": "Brussels", "postal_code": "1000", "country": "Belgium", "address": "",
+  "linkedin_url": "https://www.linkedin.com/in/alex-martin-example/", "website": "", "headline": "Business Development & IT Sales",
+  "google_email": "alex.martin@example.com",
+  "years_experience_total": 6, "years_by_skill": {"salesforce": 3, "project management": 4},
+  "salary_year_eur": 48000, "salary_month_eur": 4000, "notice_period": "1 month", "available_from": "Immediately",
+  "authorized_to_work": true, "needs_sponsorship": false, "willing_relocate": true, "driving_licence": true,
+  "languages": {"english": "Professional", "french": "Native", "dutch": "B1 (intermediate)"},
+  "education": "Master's degree",
+  "cv_files": {"en": "C:/path/to/CV_Alex_Martin_EN.pdf", "fr": "C:/path/to/CV_Alex_Martin_FR.pdf", "nl": ""},
+  "default_cv_lang": "en", "cover_letter": ""
+}
