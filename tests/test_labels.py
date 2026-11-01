@@ -42,4 +42,26 @@ class TestLabels(unittest.TestCase):
             self.assertEqual(pg.locator("#b1").evaluate(F.GROUP_JS), "Seriez-vous prêt à déménager ?")
             b.close()
 
+class TestResumeCardAndBlock(unittest.TestCase):
+    def test_resume_card_text_is_not_a_question(self):
+        self.assertTrue(F.FILE_LIKE.search("54 Ko · Dernière utilisation le 01/11/2026"))
+        self.assertTrue(F.FILE_LIKE.search("CV_Mohamed_Tchato_FR.pdf"))
+        self.assertFalse(F.FILE_LIKE.search("Are you authorized to work in Belgium?"))
+    def test_blocked_detects_guest_and_checkpoint(self):
+        from playwright.sync_api import sync_playwright
+        from jobbot import linkedin
+        with sync_playwright() as p:
+            b = p.chromium.launch(); pg = b.new_page()
+            pg.set_content("<nav><a>Linkedin</a><a>S'inscrire</a><button>S'identifier</button></nav>"); self.assertTrue(linkedin.blocked(pg))
+            pg.set_content("<nav><a>Emplois</a><button>Postuler</button></nav>"); self.assertFalse(linkedin.blocked(pg)); b.close()
+
+class TestDiscard(unittest.TestCase):
+    def test_save_application_window_is_discarded(self):
+        from playwright.sync_api import sync_playwright
+        from jobbot import linkedin
+        html = '<div role=dialog><h2>Enregistrer cette candidature ?</h2><p>Votre candidature sera abandonnée si vous ne la enregistrez pas.</p><button onclick="window.r=\'save\'">Enregistrer</button><button onclick="window.r=\'del\'">Supprimer</button></div>'
+        with sync_playwright() as p:
+            b = p.chromium.launch(); pg = b.new_page(); pg.set_content(html); linkedin.discard(pg)
+            self.assertEqual(pg.evaluate("window.r"), "del"); b.close()
+
 if __name__ == "__main__": unittest.main()

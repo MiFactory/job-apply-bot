@@ -1,4 +1,4 @@
-import re, time, urllib.parse
+import unicodedata, re, time, urllib.parse
 from . import store, profile as P
 from . import logger
 from .browser import human_check, pause_for_human, login_with_google, should_stop, HOOKS
@@ -34,9 +34,33 @@ def check_search_location(page, wanted):
     try:
         got = page.evaluate("""() => { const e = document.querySelector("input[id*='location'], input[aria-label*='ocation'], input[aria-label*='Lieu']"); return e ? e.value : ''; }""") or ""
         logger.info(f"SEARCH LOCATION wanted='{wanted}' linkedin_shows='{got}'")
-        if got and wanted and wanted.lower().split(",")[0] not in got.lower():
+        def n(x): 
+            x = "".join(c for c in unicodedata.normalize("NFKD", x.lower()) if not unicodedata.combining(c))
+            return x.replace("brussels", "bruxelles").replace("brussel", "bruxelles").replace("belgium", "belgique").replace("belgie", "belgique")
+        parts = [x.strip() for x in n(wanted).split(",")]
+        if got and wanted and not any(x and x in n(got) for x in parts) and not (len(parts) > 1 and parts[-1] in n(got)):
             HOOKS["log"](f"   ⚠ LinkedIn is searching in '{got}' instead of '{wanted}' — jobs outside the target are skipped. Check the location text in Search criteria.")
     except Exception as e: logger.error("check_search_location", e, page)
+
+BLOCK_URL = ("checkpoint", "challenge", "authwall", "/login", "uas/login", "/signup")
+
+def blocked(page):
+    """True when LinkedIn shows a login / security check / guest (logged-out) page instead of the real one."""
+    try:
+        u = page.url.lower()
+        if any(k in u for k in BLOCK_URL): return True
+        return bool(page.evaluate("""() => { const t = [...document.querySelectorAll('a,button')].map(e => (e.innerText||'').trim().toLowerCase());
+            return t.includes("s'identifier") || t.includes('sign in') || t.includes('inscrivez-vous') && t.includes("s'inscrire"); }"""))
+    except Exception: return False
+
+def goto_checked(page, url):
+    """Open a LinkedIn page; if it ends on a login / security check (also after a late redirect) hand the browser to the user, then reload."""
+    for attempt in range(3):
+        page.goto(url, wait_until="domcontentloaded"); page.wait_for_timeout(2500)
+        if not blocked(page): return True
+        logger.info(f"BLOCKED page at {page.url[:100]} (attempt {attempt + 1})")
+        pause_for_human("LinkedIn asks you to log in / pass a security check (or the session expired). Do it in the browser window, then press Continue.")
+    return not blocked(page)
 
 def is_logged_in(page):
     for attempt in range(3):                  # "Navigation ... interrupted by another navigation" = LinkedIn redirecting: wait and retry
@@ -192,11 +216,25 @@ def easy_apply(page, filler, resume_path, dry_run):
         raise NeedInfo(f"could not find next/submit button (buttons: {btns})")
     raise NeedInfo("too many steps")
 
+SAVE_Q = re.compile(r"enregistrer cette candidature|save this application|candidature sera abandonn|discard (this )?application|abandonn", re.I)
+DISCARD_BTN = re.compile(r"^\s*(discard|abandonner|supprimer|annuler la candidature|delete)\s*$", re.I)
+
 def discard(page):
+    """Close the Easy Apply form WITHOUT saving: Escape, then press Discard/Abandonner/Supprimer in the 'Save this application?' window."""
     try:
-        page.keyboard.press("Escape"); page.wait_for_timeout(500)
-        page.locator("button:has-text('Discard'), button:has-text('Abandonner'), button:has-text('Annuler')").first.click(timeout=2000)
-    except Exception: pass
+        page.keyboard.press("Escape"); page.wait_for_timeout(700)
+        for _ in range(3):
+            done = False
+            for d in page.locator("dialog[open], div[role=dialog], div[role=alertdialog]").all():
+                try:
+                    if not d.is_visible() or not SAVE_Q.search(d.inner_text() or ""): continue
+                    for b in d.locator("button").all():
+                        if b.is_visible() and DISCARD_BTN.match((b.inner_text() or b.get_attribute("aria-label") or "")):
+                            b.click(timeout=2000); page.wait_for_timeout(600); done = True; logger.info("discard: pressed " + (b.inner_text() or "")[:20]); break
+                except Exception: pass
+                if done: break
+            if not done: break
+    except Exception as e: logger.error("discard", e, page)
 
 def open_card(page, card, jid, timeout_ms=6000):
     """Click a result card and make sure the detail pane really switched to THAT job (LinkedIn keeps the old one when a click is swallowed).
@@ -231,7 +269,7 @@ def run(page, profile, criteria, max_apps, dry_run, interactive, asker=None, mot
         for loc in criteria["locations"]:
             for start in range(0, 100, 25):
                 url_s = search_url(title_q, loc, criteria, start); logger.step("linkedin", "", f"search '{title_q}' in '{loc}' page {start // 25 + 1}"); logger.info("GOTO " + url_s)
-                page.goto(url_s); human_check(page, "LinkedIn")
+                if not goto_checked(page, url_s): HOOKS["log"]("⛔ LinkedIn is still on a login / security page — stopping this run. Log in with 🔑 LinkedIn, then start again."); HOOKS["result"] = "login"; return done
                 check_search_location(page, loc)
                 cards = job_cards(page)
                 n = cards.count()
@@ -262,6 +300,10 @@ def run(page, profile, criteria, max_apps, dry_run, interactive, asker=None, mot
                             raise TimeoutError("job details did not switch to this job")
                         human_check(page, "LinkedIn")
                         title, company, loc_txt, desc = read_detail(page)
+                        if blocked(page) or re.search(r"conditions g[ée]n[ée]rales|terms of service|user agreement|bienvenue dans votre communaut|welcome to your professional", title or "", re.I):
+                            logger.info(f"GUEST/BLOCKED page read as job title '{title}'")
+                            if not goto_checked(page, url_s): HOOKS["log"]("⛔ LinkedIn session lost — log in with 🔑 LinkedIn and start again."); HOOKS["result"] = "login"; return done
+                            break                                     # re-read this results page after the login
                         if not title.strip(): raise TimeoutError("job details did not load")     # never log an unreadable page as SKIPPED
                         url = f"https://www.linkedin.com/jobs/view/{jid}/"
                         if company.lower() in [c.lower() for c in criteria["exclude_companies"]]:

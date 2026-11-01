@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.8
+- **Session lost / security check**: when LinkedIn shows its login, a "challenge" check or the logged-out page (cookie banner "Mise à jour de nos conditions générales" was read as a job title), the bot now pauses with a Continue button, reloads the page after you log in, and stops cleanly if it stays blocked — no more "0 job cards" loops or wrong jobs.
+- **CV-choice step** ("54 Ko · Dernière utilisation le …") is no longer treated as a question (NEEDS_INFO with empty options).
+- Location warning no longer fires when a region (e.g. Wallonia) falls back to the country LinkedIn shows (Belgique).
+
+## 1.3.7
+- **"Enregistrer cette candidature ?" window** (buttons Supprimer / Enregistrer) stayed open after each job (dry-run or error) and blocked the next one: the bot now finds that window and presses Discard / Abandonner / Supprimer. It never presses "Enregistrer".
+- False warning "LinkedIn is searching in 'Bruxelles…' instead of 'Brussels'": location names are now compared in any language/accent.
+- Reminder: with **Dry-run ticked the bot fills the form but does not submit** — untick it for real applications.
+
 ## 1.3.6
 - **Default answers instead of skipping**: when no rule, CV evidence or earlier answer fits, the bot now answers by default policy — yes · at least 2 years · notice/availability "1 month" · salary "Conventional" (else first option) — instead of asking/skipping. Sensitive questions (gender, health, birth date…) are never guessed. Switch off with `"default_answers": false` in profile.json.
 - **Radio options were empty** (`['','']`) on the new LinkedIn form: question now read from the input's aria-label and the option text from the element next to the input.

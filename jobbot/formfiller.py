@@ -141,7 +141,7 @@ def clean_label(l: str) -> str:
     if len(words) > 3 and len(words) % 2 == 0 and words[:len(words)//2] == words[len(words)//2:]: l = " ".join(words[:len(words)//2])
     return l
 
-FILE_LIKE = re.compile(r"\.(pdf|docx?|odt|rtf)\b", re.I)
+FILE_LIKE = re.compile(r"\.(pdf|docx?|odt|rtf)\b|\b\d+([.,]\d+)?\s*(ko|mo|kb|mb)\b|derni[eè]re utilisation|last used|import[ée]+ le|uploaded on", re.I)
 COVER = re.compile(r"cover letter|motivation|lettre de motivation|motivatiebrief|message to (the )?(hiring|recruiter)|why (do you want|are you interested)|pourquoi", re.I)
 
 _Q = None
