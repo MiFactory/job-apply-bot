@@ -58,6 +58,24 @@ python main.py report                                                    # statu
 python main.py --profile "Alex" run                                      # pick a profile
 ```
 
+Saved-jobs runs also finish your **draft applications** (LinkedIn *Suivi des emplois › Brouillon*) — untick *Also finish my draft applications* to skip them.
+
+## Unknown questions
+The bot waits **30 s** for your answer (setting *Wait for my answer*), then answers from your **CV, profile and earlier answers**: skills/degrees only if your CV shows them, willingness questions *yes*, years of experience from the CV. **Gender, disability, ethnicity, religion, criminal record, birth date, nationality, health, bank details are never guessed.** Guessed answers appear in orange (*auto*) in the right-hand list — edit them and your answer replaces the guess. Unattended (scheduled) runs use the same rules.
+
+## Saved jobs
+
+Apply to the jobs you saved on LinkedIn (*My items › Saved jobs*). Your search filters (title, location, score) are **not** applied to them: you picked these jobs yourself.
+
+* **GUI:** the **⭐ Apply saved jobs** button runs the saved jobs now. In *Search criteria*, **Saved jobs** = *Ignore* / *Apply saved jobs first, then search* / *Only saved jobs* is used by normal and scheduled runs. Tick *Remove a saved job from Saved after applying* to clean the list as you go.
+* **CLI:** `python main.py run --saved only` (or `first`).
+* Closed jobs ("no longer accepting applications") and jobs that need the company's site are logged once as `SKIPPED` (note starts with `saved:`) and not reopened. Jobs earlier skipped by the search filters, or that needed an answer, are retried.
+* Start with `--dry-run --saved only --max 3` to check it works with your LinkedIn page.
+
+## Pop-ups and timeouts
+
+After *Submit*, LinkedIn shows a post-apply window; closing it asks *Supprimer de votre candidature ?*. The bot now closes such pop-ups itself (it only presses *Supprimer / Discard* on confirmations that say your profile is not affected, or on its own unfinished application, and never on unknown dialogs). If something still blocks a click, the job is skipped after the **timeout** (default 15 s, adjustable in *Search criteria › Timeout per click / page* or `--timeout`) and retried on a later run.
+
 ## Scheduling & automatic retry
 
 Run every chosen weekday at a set hour, and keep going after a LinkedIn limit without you.

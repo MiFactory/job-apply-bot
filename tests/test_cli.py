@@ -62,7 +62,7 @@ class ScheduleLoop(unittest.TestCase):
                 if n["k"] >= 3: raise KeyboardInterrupt
             runner.run_jobs = fake_run; B.Browser = FakeBrowser; time.sleep = fake_sleep
             import jobbot.browser as JB; JB.Browser = FakeBrowser
-            a = types.SimpleNamespace(days="all", time="09:00", retry=5, max=3, now=True)
+            a = types.SimpleNamespace(days="all", time="09:00", retry=5, max=3, now=True, timeout=None)
             out = io.StringIO()
             with contextlib.redirect_stdout(out): main.cmd_schedule(a)
             text = out.getvalue(); self.assertEqual(len(calls), 1, text); self.assertIn("result: limit", text); self.assertIn("testing again", text); self.assertIn("bye", text)

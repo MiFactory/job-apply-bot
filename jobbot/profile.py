@@ -10,7 +10,7 @@ DEFAULT_PROFILE = {
     "city": "", "postal_code": "", "country": "Belgium", "address": "",
     "linkedin_url": "", "website": "", "headline": "",
     "years_experience_total": 5, "years_by_skill": {},
-    "salary_year_eur": 0, "salary_month_eur": 0, "notice_period": "Immediate", "available_from": "Immediately",
+    "salary_year_eur": 0, "salary_month_eur": 0, "notice_period": "1 month", "available_from": "1 month", "default_answers": True,
     "authorized_to_work": True, "needs_sponsorship": False, "willing_relocate": True, "driving_licence": True,
     "languages": {"english": "Professional", "french": "Native"}, "education": "Master's degree",
     "google_email": "", "cv_files": {"en": "", "fr": "", "nl": ""}, "default_cv_lang": "en", "cover_letter": ""
@@ -29,6 +29,12 @@ DEFAULT_CRITERIA = {
     "max_applications_per_day": 40,
     "skip_languages": ["nl"],
     "location_must_contain": ["belg", "brussel", "bruxel", "wallon", "vlaan", "flan", "namur", "liège", "luik", "charleroi", "gent", "antwerp", "anvers", "leuven", "mons", "nivelles", "waterloo", "wavre"],   # skip ads written in these languages (nl = Dutch-only ads)
+    "saved_jobs": "off",        # LinkedIn «Saved jobs»: off | first (apply to saved jobs, then search) | only
+    "include_drafts": True,     # saved-jobs runs also finish your LinkedIn drafts («Brouillon» / unsent applications)
+    "unsave_after_apply": False,  # remove a saved job from your Saved list once applied
+    "timeout_seconds": 15,      # how long a click / page may wait before the job is skipped (GUI: Search criteria › Timeout)
+    "answer_timeout_seconds": 30,   # wait this long for YOUR answer to an unknown form question (0 = forever), then …
+    "auto_answer": True,            # … answer from the CV / profile / earlier answers (marked «auto»; sensitive questions are never guessed)
     "ask_user_when_unknown": True
 }
 

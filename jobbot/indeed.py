@@ -1,5 +1,7 @@
 import re, urllib.parse
 from . import store, profile as P
+from . import popups
+from . import logger
 from .browser import human_check, pause_for_human, login_with_google, should_stop, HOOKS
 from .formfiller import Filler, NeedInfo
 
@@ -45,6 +47,7 @@ def run(page, profile, criteria, max_apps, dry_run, interactive, asker=None, mot
                         company = g("[data-testid='inlineHeader-companyName'], [data-company-name]")
                         locn = g("[data-testid='inlineHeader-companyLocation'], [data-testid='job-location']")
                         desc = g("#jobDescriptionText"); url = f"https://{domain_for(loc)}/viewjob?jk={jid}"
+                        if not title: raise TimeoutError("job details did not load")     # never log an unreadable page as SKIPPED
                         sc, why = P.score_job(title, desc, criteria)
                         if not P.location_ok(locn, criteria): sc, why = 0, f"location outside target: {locn}"
                         if sc < criteria["min_score"] or company.lower() in [c.lower() for c in criteria["exclude_companies"]]:
@@ -77,5 +80,6 @@ def run(page, profile, criteria, max_apps, dry_run, interactive, asker=None, mot
                         store.log_application("indeed", jid, title, company, locn, url, status, note); seen.add(("indeed", jid))
                         if status in ("APPLIED", "DRY_RUN"): done += 1; HOOKS["log"](f"   ✅ applied ({done})")
                     except Exception as e:
-                        HOOKS["log"](f"   ⚠ {type(e).__name__}: {str(e)[:100]}")
+                        detail = logger.error("indeed.run", e, page)
+                        HOOKS["log"]("   ⚠ " + popups.friendly_error(e, criteria.get("timeout_seconds", 15)) + f"   → details in {logger.log_path().name}"); HOOKS["log"]("      " + detail); popups.dismiss_popups(page)
     return done

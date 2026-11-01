@@ -3,7 +3,7 @@ Reads offers on LinkedIn / Indeed in a real browser and applies for you.
 Usage:
   python main.py setup  --cv "..\\CV_EN.pdf" [--cv-fr "..\\CV_FR.pdf"]   # analyse CV → profile + criteria (asks what is missing)
   python main.py login [--google you@gmail.com]                            # open the browser once; log in by hand or via your Gmail account
-  python main.py run [--site linkedin|indeed|both] [--max 30] [--dry-run] [--unattended]
+  python main.py run [--site linkedin|indeed|both] [--max 30] [--timeout 15] [--saved off|first|only] [--dry-run] [--unattended]
   python main.py schedule --days mon-fri --time 09:00 [--retry 5] [--max 30] [--now]   # run every chosen day/hour; after a LinkedIn limit, test again every N min
   python main.py report                                                    # summary of applications + pending questions
 """
@@ -77,6 +77,8 @@ def cmd_run(a):
     from jobbot.browser import Browser
     prof, crit = P.load_profile(), P.load_criteria()
     if not crit["titles"]: sys.exit("No job titles — run: python main.py setup --cv ...")
+    if getattr(a, "timeout", None): crit["timeout_seconds"] = a.timeout
+    if getattr(a, "saved", None): crit["saved_jobs"] = a.saved
     sites = crit["sites"] if a.site == "both" else [a.site]
     from jobbot.runner import run_jobs
     import json
@@ -105,6 +107,7 @@ def cmd_schedule(a):
     if a.max: s["max_per_run"] = a.max
     prof, crit = P.load_profile(), P.load_criteria()
     if not crit["titles"]: sys.exit("No job titles — run: python main.py setup --cv ...")
+    if getattr(a, "timeout", None): crit["timeout_seconds"] = a.timeout
     s["enabled"] = True; S.save(s)
     sites = crit["sites"]; sch = S.Scheduler(s)
     if a.now: sch.next_at = dt.datetime.now()
@@ -140,8 +143,8 @@ if __name__ == "__main__":
     from jobbot import __version__; ap.add_argument("--version", action="version", version=f"Job Apply Bot {__version__} — created by MiFactory (mifactory.ma)"); ap.add_argument("--profile", help="profile name (see data/profiles); default = last used"); sp = ap.add_subparsers(dest="cmd", required=True)
     s = sp.add_parser("setup"); s.add_argument("--cv"); s.add_argument("--cv-fr")
     sc = sp.add_parser("schedule"); sc.add_argument("--days", help="e.g. mon-fri, mon,wed,fri, all"); sc.add_argument("--time", help="HH:MM (24h, local)")
-    sc.add_argument("--retry", type=int, help="minutes between tests after a LinkedIn limit (default 5)"); sc.add_argument("--max", type=int, help="max applications per run"); sc.add_argument("--now", action="store_true", help="start a run immediately")
+    sc.add_argument("--retry", type=int, help="minutes between tests after a LinkedIn limit (default 5)"); sc.add_argument("--max", type=int, help="max applications per run"); sc.add_argument("--timeout", type=int, help="seconds a click/page may wait before the job is skipped"); sc.add_argument("--now", action="store_true", help="start a run immediately")
     l = sp.add_parser("login"); l.add_argument("--google", help="Gmail address to sign in with (Continue with Google)"); sp.add_parser("report")
     r = sp.add_parser("run"); r.add_argument("--site", default="both", choices=["linkedin", "indeed", "both"])
-    r.add_argument("--max", type=int, default=30); r.add_argument("--dry-run", action="store_true"); r.add_argument("--unattended", action="store_true")
+    r.add_argument("--saved", choices=["off", "first", "only"], help="LinkedIn «Saved jobs»: off | first (saved, then search) | only (default from criteria)"); r.add_argument("--timeout", type=int, help="seconds a click/page may wait before the job is skipped (default from criteria, 15)"); r.add_argument("--max", type=int, default=30); r.add_argument("--dry-run", action="store_true"); r.add_argument("--unattended", action="store_true")
     a = ap.parse_args(); profiles.migrate(); profiles.activate(a.profile or profiles.active()); print(f"Profile: {profiles.active()}"); {"setup": cmd_setup, "login": cmd_login, "run": cmd_run, "schedule": cmd_schedule, "report": cmd_report}[a.cmd](a)

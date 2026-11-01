@@ -8,13 +8,14 @@ DATA.mkdir(exist_ok=True)
 APPS = DATA / "applications.csv"
 ANSWERS = DATA / "answers.json"
 PENDING = DATA / "pending_questions.csv"
+AUTO = DATA / "answers_auto.json"       # keys of answers the bot GUESSED (CV-based) — shown in orange, never taught as facts
 
 
 def set_dir(d):
     """Point the log / answers files at another profile folder."""
-    global APPS, ANSWERS, PENDING
+    global APPS, ANSWERS, PENDING, AUTO
     d = pathlib.Path(d); d.mkdir(parents=True, exist_ok=True)
-    APPS, ANSWERS, PENDING = d / "applications.csv", d / "answers.json", d / "pending_questions.csv"
+    APPS, ANSWERS, PENDING, AUTO = d / "applications.csv", d / "answers.json", d / "pending_questions.csv", d / "answers_auto.json"
 FIELDS = ["date", "site", "job_id", "title", "company", "location", "url", "status", "note"]
 
 
@@ -29,10 +30,29 @@ def _write_header(path, fields):
 
 
 def seen_jobs():
+    """Jobs that need no further attempt. NOT final: DRY_RUN (a test run never applied), ERROR, and NEEDS_INFO whose question
+    has been answered since — these are tried again, so a real run applies to what a dry run only looked at."""
+    if not APPS.exists():
+        return set()
+    answered = set(load_answers())
+    out = set()
+    with open(APPS, encoding="utf-8-sig") as f:
+        for r in csv.DictReader(f, delimiter=";"):
+            st = r.get("status") or ""
+            if st in ("DRY_RUN", "ERROR"): continue
+            if st == "NEEDS_INFO" and norm(r.get("note") or "") in answered: continue
+            out.add((r["site"], r["job_id"]))
+    return out
+
+
+def finished_saved_jobs():
+    """Saved jobs that need no more work: applied, or set aside by a saved-jobs run (closed / external site).
+    Jobs skipped by the *search* filters, DRY_RUN and NEEDS_INFO are retried when they are in your Saved list."""
     if not APPS.exists():
         return set()
     with open(APPS, encoding="utf-8-sig") as f:
-        return {(r["site"], r["job_id"]) for r in csv.DictReader(f, delimiter=";")}
+        return {(r["site"], r["job_id"]) for r in csv.DictReader(f, delimiter=";")
+                if r.get("status") == "APPLIED" or (r.get("status") == "SKIPPED" and (r.get("note") or "").startswith("saved:"))}
 
 
 def log_application(site, job_id, title, company, location, url, status, note=""):
@@ -56,11 +76,19 @@ def load_answers():
     return read_json(ANSWERS, {})
 
 
-def save_answer(question, answer):
+def load_auto():
+    from .profile import read_json
+    d = read_json(AUTO, {}); return set(d.get("keys", [])) if isinstance(d, dict) else set()
+
+
+def save_answer(question, answer, auto=False):
+    """auto=True marks a CV-based guess (you can review / overwrite it; a manual answer removes the mark)."""
     with _LOCK:
-        a = load_answers()
-        a[norm(question)] = answer
+        a = load_answers(); k = norm(question)
+        a[k] = answer
         ANSWERS.write_text(json.dumps(a, indent=2, ensure_ascii=False), encoding="utf-8")
+        keys = load_auto(); keys = (keys | {k}) if auto else (keys - {k})
+        AUTO.write_text(json.dumps({"keys": sorted(keys)}, indent=2), encoding="utf-8")
 
 
 def log_pending(site, title, company, question, url):

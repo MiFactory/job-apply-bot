@@ -14,11 +14,11 @@ class TmpData(unittest.TestCase):
     """Every test works in a throw-away data folder, never the real one."""
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.d = pathlib.Path(self.tmp.name)
-        self._old = (store.APPS, store.ANSWERS, store.PENDING, P.PROFILE, P.CRITERIA, profiles.DATA, profiles.PROFILES, profiles.ACTIVE, profiles._active)
+        self._old = (store.AUTO, store.APPS, store.ANSWERS, store.PENDING, P.PROFILE, P.CRITERIA, profiles.DATA, profiles.PROFILES, profiles.ACTIVE, profiles._active)
         profiles.DATA = self.d; profiles.PROFILES = self.d / "profiles"; profiles.ACTIVE = self.d / "active_profile.txt"; profiles._active = None
         P.PROFILE, P.CRITERIA = self.d / "profile.json", self.d / "criteria.json"; store.set_dir(self.d)
     def tearDown(self):
-        (store.APPS, store.ANSWERS, store.PENDING, P.PROFILE, P.CRITERIA, profiles.DATA, profiles.PROFILES, profiles.ACTIVE, profiles._active) = self._old
+        (store.AUTO, store.APPS, store.ANSWERS, store.PENDING, P.PROFILE, P.CRITERIA, profiles.DATA, profiles.PROFILES, profiles.ACTIVE, profiles._active) = self._old
         self.tmp.cleanup()
 
 
@@ -110,7 +110,7 @@ class TestAnswerEngine(unittest.TestCase):
                "Téléphone portable": "400000000", "Phone": "400000000", "Code postal": "1000", "Ville": "Brussels", "Voornaam": "Alex", "Achternaam": "Martin",
                "Prénom": "Alex", "Nom de famille": "Martin", "Salaire annuel souhaité": "48000", "Gewenst jaarloon": "48000", "Zip code": "1000",
                "Combien d'années d'expérience avez-vous ?": "3", "Do you have a valid driver's licence?": "yes", "Are you willing to relocate?": "yes",
-               "Do you have a Bachelor's degree?": "yes", "What is your notice period?": "Immediate", "When can you start?": "Immediate", "Availability": "Immediate"}
+               "Do you have a Bachelor's degree?": "yes", "What is your notice period?": "1 month", "When can you start?": "1 month", "Availability": "1 month"}
         for lab, want in exp.items(): self.assertEqual(F.answer_for(lab, PROF), want, lab)
 
     def test_unknown_questions_are_not_guessed(self):
@@ -241,5 +241,39 @@ class TestCvAnalyzer(TmpData):
         with self.assertRaises(Exception): cv_analyzer.analyze(self.d / "nope.pdf")
 
 
+class TestLogAndGeo(unittest.TestCase):
+    def test_search_url_uses_country_geoid(self):
+        from jobbot import linkedin
+        u = linkedin.search_url("QHSE", "Belgium", {"posted_within_days": 30, "easy_apply_only": True})
+        self.assertIn("geoId=100565514", u); self.assertIn("location=Belgium", u)
+
+    def test_logger_writes_traceback(self):
+        import tempfile, pathlib, logging
+        from jobbot import logger, store
+        old = store.DATA; store.DATA = pathlib.Path(tempfile.mkdtemp()); logger._log = None
+        try:
+            try: 1 / 0
+            except Exception as e: msg = logger.error("unit", e)
+            txt = logger.log_path().read_text(encoding="utf-8")
+            self.assertIn("ZeroDivisionError", txt); self.assertIn("Traceback", txt); self.assertIn("unit", msg)
+        finally:
+            for h in list(logging.getLogger("jobbot").handlers): h.close(); logging.getLogger("jobbot").removeHandler(h)
+            store.DATA = old; logger._log = None
+
+
+class TestLevelsAndLabels(unittest.TestCase):
+    def test_language_levels_fr(self):
+        from jobbot.formfiller import pick_option
+        o = ["Inexistant", "Conversationnel", "Professionnel", "Natif ou bilingue"]
+        self.assertEqual(pick_option(o, "Native"), "Natif ou bilingue")
+        self.assertEqual(pick_option(o, "Fluent"), "Professionnel")
+        self.assertEqual(pick_option(o, "Professional"), "Professionnel")
+
+    def test_level_falls_back_to_nearest(self):
+        from jobbot.formfiller import pick_option
+        self.assertEqual(pick_option(["None", "Basic", "Fluent", "Native"], "Professional"), "Fluent")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

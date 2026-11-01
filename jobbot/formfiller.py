@@ -1,6 +1,7 @@
 """Generic form filler: maps field labels → profile values → remembered answers → ask the user."""
 import re
 from . import store
+from .answerer import Auto
 
 class NeedInfo(Exception):
     def __init__(self, q): self.question = q; super().__init__(q)
@@ -24,8 +25,8 @@ def rules(p):
      (r"website|portfolio|site web", p["website"] or p["linkedin_url"]),
      (r"^headline|^titre\b|professional headline", p["headline"]),
      (r"notice period|notice|préavis|opzegtermijn|disponibilit|availability|available (from|as of|starting)|earliest start|start date|date de début|when can you start", p["notice_period"]),
-     (r"salary.*(month|mois|maand)|(month|mois|maand).*salary|salaire.*mensuel|maandloon|maandsalaris|bruto ?maand", str(p["salary_month_eur"])),
-     (r"salary|salaire|\bloon\b|jaarloon|jaarsalaris|salaris|rémunération|compensation|expected (annual|yearly|gross|base|pay)", str(p["salary_year_eur"])),
+     (r"salary.*(month|mois|maand)|(month|mois|maand).*salary|salaire.*mensuel|maandloon|maandsalaris|bruto ?maand", (str(p["salary_month_eur"]) if p["salary_month_eur"] else None)),
+     (r"salary|salaire|\bloon\b|jaarloon|jaarsalaris|salaris|rémunération|compensation|expected (annual|yearly|gross|base|pay)", (str(p["salary_year_eur"]) if p["salary_year_eur"] else None)),
      (r"sponsor", "no" if not p["needs_sponsorship"] else "yes"),
      (r"authori[sz]ed|legally|right to work|work permit|permis de travail|autorisé|eligible to work", "yes" if p["authorized_to_work"] else "no"),
      (r"relocat|déménag|verhuizen", "yes" if p["willing_relocate"] else "no"),
@@ -51,8 +52,30 @@ def answer_for(label: str, p: dict, kind: str = "text"):
             return val
     return None
 
+LEVELS = [   # language / skill levels in EN-FR-NL, best match first
+    ("native", r"native|natif|bilingu|mother|maternelle|moedertaal"),
+    ("fluent", r"fluent|courant|full professional|professionnel|professional|vloeiend|advanced|avanc"),
+    ("professional", r"professional|professionnel|working|vloeiend|intermediate|interm|goed"),
+    ("conversational", r"conversation|limited|limit|basic|élémentaire|elementary|beginner|débutant|gesprek|basis"),
+    ("none", r"inexistant|none|aucun|no proficiency|geen"),
+]
+
+def pick_level(options, w):
+    keys = [k for k, _ in LEVELS]
+    for i, (key, rx) in enumerate(LEVELS):
+        if key in w or (key == "fluent" and re.search(r"courant|vloeiend", w)):
+            for j in sorted(range(len(LEVELS)), key=lambda j: (abs(j - i), j)):   # the level itself, then the nearest ones
+                if keys[j] == "none" and keys[i] != "none": continue
+                for o in options:
+                    if re.search(LEVELS[j][1], o.lower()): return o
+            return None
+    return None
+
 def pick_option(options, wanted: str):
     w = (wanted or "").lower()
+    if re.search(r"native|fluent|professional|conversation|basic|none|natif|courant|professionnel|bilingu", w):
+        o = pick_level(options, w)
+        if o: return o
     if w in ("yes", "no"):
         group = YES if w == "yes" else NO
         for o in options:
@@ -62,6 +85,16 @@ def pick_option(options, wanted: str):
         if w and (w in o.lower() or o.lower() in w):
             return o
     return None
+
+OPT_JS = """el => {            // text of ONE radio option: label[for], wrapping label, or the text next to the input (new form: <div><input><label for></div><div><p>Yes</p></div>)
+  const t = x => (x && x.innerText || '').trim();
+  let s = el.id ? t(document.querySelector('label[for="' + CSS.escape(el.id) + '"]')) : '';
+  if (!s) s = t(el.closest('label'));
+  if (!s && el.parentElement) s = t(el.parentElement.nextElementSibling);
+  if (!s && el.nextElementSibling) s = t(el.nextElementSibling);
+  if (!s && el.parentElement && el.parentElement.parentElement) s = t(el.parentElement.parentElement);
+  return s.replace(/\\s+/g, ' ').trim();
+}"""
 
 LABEL_JS = """el => {
   const t = x => (x && x.innerText || '').trim();
@@ -79,11 +112,25 @@ LABEL_JS = """el => {
 GROUP_JS = """el => {
   const t = x => (x && x.innerText || '').trim();
   let s = '';
+  const al = (el.getAttribute('aria-label') || '').trim();
+  if (al.length >= 8) return al.replace(/\\s+/g, ' ').replace(/\\s*\\*$/, '');          // new LinkedIn form: the question is the aria-label of every radio
   const fs = el.closest('fieldset, [role=radiogroup], [role=group]');
   if (fs) { s = t(fs.querySelector('legend')) || t(fs.querySelector('[data-test-form-builder-radio-button-form-component__title], span, label')); 
             const lb = fs.getAttribute('aria-labelledby'); if (!s && lb) s = lb.split(' ').map(i => t(document.getElementById(i))).join(' '); }
-  if (!s) { const g = el.closest('div'); s = g && g.parentElement ? (g.parentElement.innerText || '').split('\\n')[0] : ''; }
-  return s.replace(/\\s+/g, ' ').trim();
+  if (!s) {      // no fieldset (new LinkedIn form): climb to the nearest block that holds text other than the options, take the line just before the first option
+    const grp = [...document.querySelectorAll('input[type=radio]')].filter(r => r.name === el.name);
+    const opts = new Set(['yes', 'no', 'oui', 'non', 'ja', 'nee']);
+    grp.forEach(r => { const l = r.id && document.querySelector('label[for="' + CSS.escape(r.id) + '"]'); if (l) opts.add(t(l).toLowerCase()); });
+    let e = el.closest('div');
+    while (e && e.tagName !== 'DIALOG' && e.tagName !== 'BODY') {
+      const lines = (e.innerText || '').split('\\n').map(x => x.trim()).filter(Boolean);
+      const fi = lines.findIndex(l => opts.has(l.toLowerCase()));
+      const before = (fi > 0 ? lines.slice(0, fi) : lines.filter(l => !opts.has(l.toLowerCase()))).filter(l => !opts.has(l.toLowerCase()));
+      if (before.length) { s = fi > 0 ? before[before.length - 1] : before[0]; break; }
+      e = e.parentElement;
+    }
+  }
+  return s.replace(/\\s+/g, ' ').replace(/\\s*\\*$/, '').trim();
 }"""
 
 def clean_label(l: str) -> str:
@@ -97,12 +144,34 @@ def clean_label(l: str) -> str:
 FILE_LIKE = re.compile(r"\.(pdf|docx?|odt|rtf)\b", re.I)
 COVER = re.compile(r"cover letter|motivation|lettre de motivation|motivatiebrief|message to (the )?(hiring|recruiter)|why (do you want|are you interested)|pourquoi", re.I)
 
+_Q = None
+def timed_input(prompt, seconds=0):
+    """input() with a time limit (None on timeout; 0 = wait forever). One reader thread is reused, so a late line is not lost."""
+    global _Q
+    import threading, queue, sys
+    if not seconds: return input(prompt).strip()
+    if _Q is None:
+        _Q = queue.Queue()
+        def reader():
+            while True:
+                try: _Q.put(sys.stdin.readline())
+                except Exception: _Q.put(""); return
+        threading.Thread(target=reader, daemon=True).start()
+    print(prompt, end="", flush=True)
+    try:
+        line = _Q.get(timeout=seconds)
+        return line.strip() if line else None
+    except queue.Empty:
+        print(); return None
+
+
 class Filler:
     def __init__(self, profile, criteria, interactive=True, asker=None, motivation=None):
         self.p, self.c, self.interactive, self.asker = profile, criteria, interactive, asker
         self.motivation = motivation or {}      # {"en": "...", "fr": "..."}  with {company} {title}
         self.ctx = {"title": "", "company": "", "lang": "en"}
         self.answers = store.load_answers()
+        self._answerer = None
 
     def resolve(self, label, kind="text", options=None):
         label = clean_label(label)
@@ -112,18 +181,51 @@ class Filler:
         a = answer_for(label, self.p, kind)
         if a is None:
             a = self.answers.get(store.norm(label)) or store.load_answers().get(store.norm(label))
-        if a is None and self.asker:
-            a = self.asker(label, options or [], self.ctx)      # GUI: blocks until user answers in the right panel
-            if a: store.save_answer(label, a)
-            else: raise NeedInfo(label)                         # "Skip this job": never type "None" into the form
-        elif a is None:
-            if self.c.get("ask_user_when_unknown") and self.interactive:
-                print(f"\n❓ Question in the form: {label}" + (f"\n   options: {options}" if options else ""))
-                a = input("   Your answer (saved for next time; empty = skip this job): ").strip()
-                if a: store.save_answer(label, a)
-            if not a:
-                raise NeedInfo(label)
+        if a is not None: return a
+        sug, why = self.suggest(label, kind, options)            # best guess from the CV / profile / earlier answers (or None)
+        if self.asker:
+            ctx = dict(self.ctx, suggest=sug or "", why=why, wait=self.wait_seconds() if sug else 0)
+            a = self.asker(label, options or [], ctx)           # GUI: waits for you; after the delay it returns Auto(suggestion)
+        elif self.c.get("ask_user_when_unknown") and self.interactive:
+            a = self.ask_cli(label, options, sug, why)
+        else:
+            a = Auto(sug) if sug else None                       # unattended run
+        if a and not self.c.get("auto_answer", True) and isinstance(a, Auto): a = None
+        if not a: raise NeedInfo(label)                         # "Skip this job": never type "None" into the form
+        store.save_answer(label, str(a), auto=isinstance(a, Auto))
         return a
+
+    def fallback_option(self, label, kind, options):
+        """The profile answer matched no option: use the CV guess / default policy instead of skipping the job."""
+        sug, why = self.suggest(label, kind, options)
+        o = pick_option(options, sug) if sug else None
+        if o:
+            store.save_answer(label, str(o), auto=True)
+        return o
+
+    # ---- CV-based guess + waiting time
+    def wait_seconds(self):
+        try: return max(0, int(self.c.get("answer_timeout_seconds", 30)))
+        except Exception: return 30
+
+    def suggest(self, label, kind="text", options=None):
+        if not self.c.get("auto_answer", True): return None, "auto-answer off"
+        try:
+            if self._answerer is None:
+                from . import answerer; self._answerer = answerer.build(self.p)
+            self._answerer.learned = {k: v for k, v in store.load_answers().items() if k not in store.load_auto()}
+            s, why = self._answerer.suggest(label, kind, options, self.ctx)
+            return (str(s) if s not in (None, "") else None), why
+        except Exception as e:
+            return None, f"answerer error: {type(e).__name__}"
+
+    def ask_cli(self, label, options, sug, why):
+        print(f"\n❓ Question in the form: {label}" + (f"\n   options: {options}" if options else ""))
+        w = self.wait_seconds() if sug else 0
+        if sug: print(f"   suggestion: {sug}  ({why}) — used automatically after {w}s" if w else f"   suggestion: {sug}  ({why}) — Enter accepts it")
+        a = timed_input("   Your answer (empty = " + ("accept suggestion" if sug else "skip this job") + "): ", w if sug else 0)
+        if a is None or (a == "" and sug): return Auto(sug) if sug else None
+        return a or None
 
     def fill(self, scope, resume_path=None):
         """Fill all visible, empty fields inside scope (Locator or Page). Returns number of fields touched."""
@@ -156,7 +258,7 @@ class Filler:
                 label = el.evaluate(LABEL_JS)
                 opts = [o.strip() for o in el.locator("option").all_inner_texts() if o.strip()]
                 want = self.resolve(label, "select", opts)
-                o = pick_option(opts, want)
+                o = pick_option(opts, want) or self.fallback_option(label, "select", opts)
                 if not o: raise NeedInfo(f"{label} (no matching option for '{want}': {opts})")
                 el.select_option(label=o); n += 1
             except NeedInfo: raise
@@ -174,11 +276,11 @@ class Filler:
                 if FILE_LIKE.search(label): continue            # resume chooser: keep LinkedIn's pre-selected CV
                 labs = []
                 for g in grp.all():
-                    gid = g.get_attribute("id")
-                    lab = scope.locator(f'label[for="{gid}"]').first.inner_text().strip() if gid else ""
+                    try: lab = g.evaluate(OPT_JS)
+                    except Exception: lab = ""
                     labs.append(lab)
                 want = self.resolve(label, "radio", labs)
-                o = pick_option(labs, want)
+                o = pick_option(labs, want) or self.fallback_option(label, "radio", labs)
                 if not o: raise NeedInfo(f"{label} (options {labs})")
                 i = labs.index(o)
                 try: grp.nth(i).check(force=True)

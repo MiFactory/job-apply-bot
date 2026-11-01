@@ -17,6 +17,7 @@ from PySide6.QtCore import QTime
 from jobbot import profile as P, store, cv_analyzer, profiles, scheduler as SCH
 from jobbot import browser as B
 from jobbot import __version__, CREDIT_URL
+from jobbot.answerer import Auto
 
 ROOT = pathlib.Path(__file__).resolve().parent
 DATA = P.DATA
@@ -99,14 +100,18 @@ class BrowserThread(threading.Thread):
                         if cmd[0] == "goto": b.live_page().goto(cmd[1])
                         elif cmd[0] == "fn": cmd[1](b.live_page())
                         elif cmd[0] == "run":
-                            sites, mx, dry, mot, auto = (list(cmd[1:]) + [False])[:5]
+                            sites, mx, dry, mot, auto, saved_only = (list(cmd[1:]) + [False, False])[:6]
+                            crit = dict(self.win.crit)
+                            if saved_only: crit["saved_jobs"] = "only"          # the ⭐ button: this run = saved jobs only
                             # scheduled (unattended) run: never wait for answers — unknown questions go to the right-hand list
-                            n = run_jobs(b.live_page(), self.win.prof, self.win.crit, sites, mx, dry, not auto, None if auto else self.win.worker_ask, mot)
+                            n = run_jobs(b.live_page(), self.win.prof, crit, sites, mx, dry, not auto, None if auto else self.win.worker_ask, mot)
                             br.finished.emit(n)
                     except Exception as e:
-                        br.error.emit(f"{type(e).__name__}: {str(e)[:300]}")
+                        from jobbot import logger as LG; LG.error("GUI worker run", e)
+                        br.error.emit(f"{type(e).__name__}: {str(e)[:300]}   (full details: Log button)")
         except Exception as e:
-            br.error.emit(f"Browser could not start: {type(e).__name__}: {str(e)[:300]}")
+            from jobbot import logger as LG; LG.error("browser start", e)
+            br.error.emit(f"Browser could not start: {type(e).__name__}: {str(e)[:300]}   (full details: Log button)")
 
 
 class NativeHost(QWidget):
@@ -137,16 +142,17 @@ class NativeHost(QWidget):
 
 
 class Bridge(QObject):
-    log = Signal(str); ask = Signal(str, list, dict); pause = Signal(str); finished = Signal(int); error = Signal(str); ready = Signal(int); reopen = Signal()
+    log = Signal(str); ask = Signal(str, list, dict); askdone = Signal(); pause = Signal(str); finished = Signal(int); error = Signal(str); ready = Signal(int); reopen = Signal()
 
 
 class Window(QMainWindow):
+    SAVED_MODES = ["off", "first", "only"]
     def __init__(self):
         super().__init__()
         profiles.migrate(); profiles.activate(profiles.active())
         self.setWindowTitle(f"Job Apply Bot {__version__} — {profiles.active()}"); self.resize(1700, 950)
         self.prof, self.crit, self.motiv = P.load_profile(), P.load_criteria(), load_motivation()
-        self.bridge = Bridge(); self.bridge.log.connect(self.append_log); self.bridge.ask.connect(self.on_ask)
+        self.bridge = Bridge(); self.bridge.log.connect(self.append_log); self.bridge.ask.connect(self.on_ask); self.bridge.askdone.connect(self.ask_done)
         self.bridge.pause.connect(self.on_pause); self.bridge.finished.connect(self.on_finished); self.bridge.error.connect(self.on_error); self.bridge.ready.connect(self.on_ready); self.bridge.reopen.connect(self.open_browser)
         self._answer, self._answer_ev, self._pause_ev = None, threading.Event(), threading.Event()
         self.bthread = None
@@ -188,11 +194,21 @@ class Window(QMainWindow):
         self.excl = QPlainTextEdit(", ".join(self.crit["exclude"])); self.excl.setFixedHeight(60)
         self.must = QLineEdit(", ".join(self.crit["must_have_any"])); self.days = QSpinBox(); self.days.setRange(1, 90); self.days.setValue(self.crit["posted_within_days"])
         self.maxrun = QSpinBox(); self.maxrun.setRange(1, 200); self.maxrun.setValue(30)
+        self.tmo = QSpinBox(); self.tmo.setRange(2, 300); self.tmo.setSuffix(" s"); self.tmo.setValue(int(self.crit.get("timeout_seconds", 15)))
+        self.tmo.setToolTip("How long a click or page may wait before the job is skipped (default 15 s). Raise it on a slow connection; lower it to skip stuck pop-ups faster.")
+        self.ans_tmo = QSpinBox(); self.ans_tmo.setRange(0, 600); self.ans_tmo.setSuffix(" s"); self.ans_tmo.setSpecialValueText("wait forever"); self.ans_tmo.setValue(int(self.crit.get("answer_timeout_seconds", 30)))
+        self.ans_tmo.setToolTip("When a form asks something unknown, the bot waits this long for YOUR answer, then answers itself from your CV / profile / earlier answers (marked «auto», editable on the right).")
+        self.auto_cb = QCheckBox("Answer unknown questions from my CV when I don't answer in time"); self.auto_cb.setChecked(bool(self.crit.get("auto_answer", True)))
+        self.saved_cb = QComboBox(); self.saved_cb.addItems(["Ignore saved jobs", "Apply saved jobs first, then search", "Only saved jobs"])
+        self.saved_cb.setCurrentIndex(self.SAVED_MODES.index(self.crit.get("saved_jobs", "off")) if self.crit.get("saved_jobs", "off") in self.SAVED_MODES else 0)
+        self.saved_cb.setToolTip("LinkedIn «Saved jobs» list: your search filters are NOT applied to jobs you saved. Needs LinkedIn ticked in Sites.")
+        self.draft_cb = QCheckBox("Also finish my draft applications (Brouillon)"); self.draft_cb.setChecked(bool(self.crit.get("include_drafts", True)))
+        self.unsave_cb = QCheckBox("Remove a saved job from Saved after applying"); self.unsave_cb.setChecked(bool(self.crit.get("unsave_after_apply", False)))
         self.easy = QCheckBox("Easy Apply / Indeed Apply only"); self.easy.setChecked(self.crit["easy_apply_only"])
         self.cb_li = QCheckBox("LinkedIn"); self.cb_li.setChecked("linkedin" in self.crit["sites"]); self.cb_in = QCheckBox("Indeed"); self.cb_in.setChecked("indeed" in self.crit["sites"])
         self.dry = QCheckBox("Dry-run (fill forms but do NOT submit)"); self.dry.setChecked(True)
         f.addRow("Job titles (1 per line)", self.titles); f.addRow("Locations (1 per line)", self.locs); f.addRow("Exclude words in title", self.excl)
-        f.addRow("Must contain any (optional)", self.must); f.addRow("Posted within (days)", self.days); f.addRow("Max applications this run", self.maxrun)
+        f.addRow("Must contain any (optional)", self.must); f.addRow("Posted within (days)", self.days); f.addRow("Max applications this run", self.maxrun); f.addRow("Timeout per click / page", self.tmo); f.addRow("Wait for my answer", self.ans_tmo); f.addRow(self.auto_cb); f.addRow("Saved jobs", self.saved_cb); f.addRow(self.unsave_cb); f.addRow(self.draft_cb)
         f.addRow(self.easy); r = QHBoxLayout(); r.addWidget(self.cb_li); r.addWidget(self.cb_in); f.addRow("Sites", r); f.addRow(self.dry)
         sv2 = QPushButton("💾 Save search settings"); sv2.clicked.connect(self.save_search); f.addRow(sv2)
         tabs.addTab(s, "Search criteria")
@@ -234,7 +250,8 @@ class Window(QMainWindow):
                          locations=[t.strip() for t in self.locs.toPlainText().splitlines() if t.strip()],
                          exclude=[t.strip() for t in self.excl.toPlainText().replace("\n", ",").split(",") if t.strip()],
                          must_have_any=[t.strip() for t in self.must.text().split(",") if t.strip()],
-                         posted_within_days=self.days.value(), easy_apply_only=self.easy.isChecked(),
+                         posted_within_days=self.days.value(), easy_apply_only=self.easy.isChecked(), timeout_seconds=self.tmo.value(), answer_timeout_seconds=self.ans_tmo.value(), auto_answer=self.auto_cb.isChecked(),
+                         saved_jobs=self.SAVED_MODES[self.saved_cb.currentIndex()], unsave_after_apply=self.unsave_cb.isChecked(), include_drafts=self.draft_cb.isChecked(),
                          sites=[s for s, c in (("linkedin", self.cb_li), ("indeed", self.cb_in)) if c.isChecked()])
         P.save(P.CRITERIA, self.crit); self.append_log("💾 search settings saved")
 
@@ -249,7 +266,11 @@ class Window(QMainWindow):
         self.start_b = QPushButton("▶ Start applying"); self.start_b.setStyleSheet("background:#1b7f3b;color:white;font-weight:bold;padding:6px 14px"); self.start_b.setMinimumWidth(140)
         self.stop_b = QPushButton("⏹ Stop"); self.stop_b.setEnabled(False); self.stop_b.setStyleSheet("padding:6px 14px")
         self.start_b.clicked.connect(self.start); self.stop_b.clicked.connect(self.stop)
-        bar.addWidget(self.start_b); bar.addWidget(self.stop_b)
+        self.log_b = QPushButton("📄 Log"); self.log_b.setToolTip("Open the run log (errors with full details)"); self.log_b.setStyleSheet("padding:6px 10px"); self.log_b.clicked.connect(self.open_log)
+        self.saved_b = QPushButton("⭐ Apply saved jobs"); self.saved_b.setStyleSheet("padding:6px 10px")
+        self.saved_b.setToolTip("Apply to the jobs in your LinkedIn «Saved jobs» list now (search filters are not applied to them).")
+        self.saved_b.clicked.connect(lambda: self.start(saved_only=True))
+        bar.addWidget(self.start_b); bar.addWidget(self.stop_b); bar.addWidget(self.saved_b); bar.addWidget(self.log_b)
         bar3_widgets = []
         for txt, url in (("LinkedIn", "https://www.linkedin.com/login"), ("Indeed", "https://secure.indeed.com/auth?hl=fr_BE"), ("Google", "https://accounts.google.com/")):
             b = QPushButton(f"🔑 {txt}"); b.clicked.connect(lambda _=False, u=url: self.goto(u)); bar3_widgets.append(b)
@@ -356,7 +377,8 @@ class Window(QMainWindow):
         self.fill_profiles(); self.setWindowTitle(f"Job Apply Bot {__version__} — {profiles.active()}")
         self.titles.setPlainText("\n".join(self.crit["titles"])); self.locs.setPlainText("\n".join(self.crit["locations"]))
         self.excl.setPlainText(", ".join(self.crit["exclude"])); self.must.setText(", ".join(self.crit["must_have_any"]))
-        self.days.setValue(self.crit["posted_within_days"]); self.easy.setChecked(self.crit["easy_apply_only"])
+        self.days.setValue(self.crit["posted_within_days"]); self.easy.setChecked(self.crit["easy_apply_only"]); self.tmo.setValue(int(self.crit.get("timeout_seconds", 15))); self.ans_tmo.setValue(int(self.crit.get("answer_timeout_seconds", 30))); self.auto_cb.setChecked(bool(self.crit.get("auto_answer", True)))
+        sm = self.crit.get("saved_jobs", "off"); self.saved_cb.setCurrentIndex(self.SAVED_MODES.index(sm) if sm in self.SAVED_MODES else 0); self.unsave_cb.setChecked(bool(self.crit.get("unsave_after_apply", False))); self.draft_cb.setChecked(bool(self.crit.get("include_drafts", True)))
         self.cb_li.setChecked("linkedin" in self.crit["sites"]); self.cb_in.setChecked("indeed" in self.crit["sites"])
         self.def_lang.setCurrentText(self.prof.get("default_cv_lang", "en"))
         self._mot_cur = "en"; self.mot_lang.blockSignals(True); self.mot_lang.setCurrentText("en"); self.mot_lang.blockSignals(False); self.mot_edit.setPlainText(self.motiv.get("en", ""))
@@ -460,7 +482,10 @@ class Window(QMainWindow):
             val = self.prof.get(k, ""); add(label, ("yes" if val is True else "no" if val is False else str(val)), "profile:" + k, "#0b5cad")
         for lang, lvl in self.prof["languages"].items(): add(f"Language level — {lang}", lvl, "lang:" + lang, "#0b5cad")
         for sk, y in self.prof["years_by_skill"].items(): add(f"Years of experience with {sk}", str(y), "skill:" + sk, "#0b5cad")
-        for q, a in ans_all.items(): add(q, str(a), "learned", None, True)
+        auto = store.load_auto()
+        for q, a in ans_all.items():
+            if q in auto: add(q, str(a), "learned", "#b35c00", True); self.table.item(self.table.rowCount() - 1, 2).setText("auto (CV guess)")
+            else: add(q, str(a), "learned", None, True)
         self.table.blockSignals(False); self.apply_filter()
 
     def pending_questions(self):
@@ -539,7 +564,7 @@ class Window(QMainWindow):
         self.start(auto=True)
 
     # ----------------------------------------------------------- bot worker
-    def start(self, auto=False):
+    def start(self, auto=False, saved_only=False):
         self._auto_run = bool(auto)
         self.save_left(silent=True); self.save_search()
         def warn(msg):          # scheduled (unattended) starts must never open a modal dialog nobody is there to close
@@ -549,16 +574,26 @@ class Window(QMainWindow):
         if not any(self.prof["cv_files"].values()): return warn("drop at least one CV first.") or False
         if not self.bthread or not self.bthread.is_alive():
             return warn("the browser is closed. Click 🔄 Reopen browser, wait for 'browser ready', then press Start again.") or False
-        B.HOOKS["stop"] = False; self.start_b.setEnabled(False); self.stop_b.setEnabled(True)
+        B.HOOKS["stop"] = False; self.start_b.setEnabled(False); self.saved_b.setEnabled(False); self.stop_b.setEnabled(True)
         sites = self.crit["sites"]; mx = self.maxrun.value(); dry = self.dry.isChecked()
         mot = dict(self.motiv)
-        self.append_log(f"▶ start — sites={sites} max={mx} dry_run={dry}")
-        self.bthread.q.put(("run", sites, mx, dry, dict(self.motiv), bool(auto)))
+        self.append_log(f"▶ start — {'⭐ saved jobs only' if saved_only else 'saved=' + self.crit.get('saved_jobs', 'off')} sites={sites} max={mx} dry_run={dry}")
+        self.bthread.q.put(("run", sites, mx, dry, dict(self.motiv), bool(auto), bool(saved_only)))
+
+    def open_log(self):
+        from jobbot import logger as LG
+        p = LG.log_path(); LG.info("log opened from the GUI")
+        try:
+            if sys.platform.startswith("win"): os.startfile(str(p))
+            else:
+                from PySide6.QtGui import QDesktopServices; from PySide6.QtCore import QUrl; QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
+        except Exception as e: self.append_log(f"log file: {p} ({e})")
+        else: self.append_log(f"📄 log file: {p}")
 
     def stop(self): B.HOOKS["stop"] = True; self.append_log("⏹ stopping after the current job…"); self.resume(); self.answer_skip()
     def on_finished(self, n):
         from jobbot.runner import last_result
-        res = last_result(); self.append_log(f"✔ finished — {n} application(s) ({res})"); self.start_b.setEnabled(True); self.stop_b.setEnabled(False); self.refresh_table()
+        res = last_result(); self.append_log(f"✔ finished — {n} application(s) ({res})"); self.start_b.setEnabled(True); self.saved_b.setEnabled(True); self.stop_b.setEnabled(False); self.refresh_table()
         if self.sched and self.sched.s["enabled"]:
             self.sched.on_result(res)
             if res == "limit": self.append_log(f"⏳ LinkedIn limit — I will test again in {self.sched.s['retry_minutes']} min and continue by myself.")
@@ -567,22 +602,43 @@ class Window(QMainWindow):
         if self.embedded and "closed" in m.lower():
             self.append_log("⚠ Chrome closed while embedded as a child — switching to 'Docked' mode (browser follows this window).")
             self.embed_cb.setCurrentIndex(1); self.release_embed(); QTimer.singleShot(800, self.open_browser); return
-        self.append_log("❌ " + m); self.start_b.setEnabled(True); self.stop_b.setEnabled(False); self.host_info.setText(m); self.host_info.show()
+        self.append_log("❌ " + m); self.start_b.setEnabled(True); self.saved_b.setEnabled(True); self.stop_b.setEnabled(False); self.host_info.setText(m); self.host_info.show()
 
     # worker-thread side (blocks until the user answers in the GUI)
     def worker_ask(self, label, options, ctx):
         self._answer = None; self._answer_ev.clear(); self.bridge.ask.emit(label, list(options), dict(ctx))
+        wait = int(ctx.get("wait") or 0); sug = ctx.get("suggest") or ""
+        if sug and wait:
+            if self._answer_ev.wait(wait): return self._answer
+            self.bridge.askdone.emit(); return Auto(sug)              # no answer in time → the CV-based suggestion, saved with the «auto» mark
         self._answer_ev.wait(); return self._answer
     def worker_pause(self, msg): self._pause_ev.clear(); self.bridge.pause.emit(msg); self._pause_ev.wait()
 
     # GUI-thread side
     def on_ask(self, label, options, ctx):
         self.ask_lbl.setText(f"<b>{label}</b><br><small>{ctx.get('title','')} @ {ctx.get('company','')}</small>")
-        self.ask_in.clear(); self.ask_in.addItems([o for o in options if not o.lower().startswith(("select", "choisir", "sélection"))]); self.ask_in.setCurrentText("")
+        self.ask_in.clear(); self.ask_in.addItems([o for o in options if not o.lower().startswith(("select", "choisir", "sélection"))])
+        sug = ctx.get("suggest") or ""; self.ask_in.setCurrentText(sug)
+        self._ask_left = int(ctx.get("wait") or 0) if sug else 0; self._ask_base = self.ask_lbl.text()
+        if not hasattr(self, "_ask_timer"):
+            self._ask_timer = QTimer(self); self._ask_timer.setInterval(1000); self._ask_timer.timeout.connect(self._ask_tick)
+        self._ask_timer.stop()
+        if self._ask_left: self._ask_timer.start(); self._ask_tick(first=True)
         self.ask_box.show(); self.ask_in.setFocus()
+        if sug: self.ask_in.lineEdit().selectAll()
+    def _ask_tick(self, first=False):
+        if not first: self._ask_left -= 1
+        if self._ask_left <= 0: self._ask_timer.stop(); return
+        self.ask_lbl.setText(self._ask_base + f"<br><small style='color:#b35c00'>⏱ no answer in {self._ask_left}s → the bot answers from your CV with the suggestion shown (editable)</small>")
+    def ask_done(self):
+        if hasattr(self, "_ask_timer"): self._ask_timer.stop()
+        self.ask_box.hide(); QTimer.singleShot(300, self.refresh_table)
     def answer_ok(self):
+        if hasattr(self, "_ask_timer"): self._ask_timer.stop()
         self._answer = self.ask_in.currentText().strip() or None; self.ask_box.hide(); self._answer_ev.set(); QTimer.singleShot(300, self.refresh_table)
-    def answer_skip(self): self._answer = None; self.ask_box.hide(); self._answer_ev.set()
+    def answer_skip(self):
+        if hasattr(self, "_ask_timer"): self._ask_timer.stop()
+        self._answer = None; self.ask_box.hide(); self._answer_ev.set()
     def on_pause(self, msg): self.pause_lbl.setText("⏸ " + msg + "  (do it in the browser, then click Continue)"); self.pause_box.show()
     def resume(self): self.pause_box.hide(); self._pause_ev.set()
 

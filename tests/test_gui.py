@@ -65,11 +65,11 @@ class GuiTests(TmpData):
 
     def test_scheduled_start_queues_unattended_run(self):
         w = self._arm(); w.sch_tick(); cmd = w.bthread.q.get_nowait()
-        self.assertEqual(cmd[0], "run"); self.assertTrue(cmd[-1], "scheduled runs must be flagged unattended"); self.assertFalse(w.start_b.isEnabled()); self.assertTrue(w.stop_b.isEnabled())
+        self.assertEqual(cmd[0], "run"); self.assertTrue(cmd[5], "scheduled runs must be flagged unattended"); self.assertFalse(cmd[6]); self.assertFalse(w.start_b.isEnabled()); self.assertTrue(w.stop_b.isEnabled())
         w.sch_tick(); self.assertTrue(w.bthread.q.empty(), "must not start a second run while one is running")
 
     def test_manual_start_is_interactive(self):
-        w = self._arm(); w.start(); cmd = w.bthread.q.get_nowait(); self.assertFalse(cmd[-1])
+        w = self._arm(); w.start(); cmd = w.bthread.q.get_nowait(); self.assertFalse(cmd[5]); self.assertFalse(cmd[6])
 
     def test_limit_result_arms_retry_then_resume(self):
         w = self._arm(); w.sch_tick(); w.bthread.q.get_nowait(); B.HOOKS["result"] = "limit"; w.on_finished(0)
@@ -134,6 +134,17 @@ class GuiTests(TmpData):
         pdir = profiles.PROFILES / profiles.active()
         for f in ("profile.json", "criteria.json", "motivation.json", "answers.json", "schedule.json"): (pdir / f).write_text("{corrupt", encoding="utf-8")
         w = self.gui.Window(); w.sch_timer.stop(); w.dock_timer.stop(); w.close()
+
+    def test_timeout_setting_saved_and_loaded_per_profile(self):
+        w = self.w; self.assertEqual(w.tmo.value(), 15); w.tmo.setValue(40); w.save_search(); self.assertEqual(P.load_criteria()["timeout_seconds"], 40)
+        profiles.create("Slow"); w.switch_profile("Slow"); self.assertEqual(w.tmo.value(), 15); w.tmo.setValue(90); w.save_search(); w.switch_profile("default"); self.assertEqual(w.tmo.value(), 40)
+
+    def test_saved_jobs_settings_and_button(self):
+        w = self._arm(); self.assertEqual(w.saved_cb.currentIndex(), 0); w.saved_cb.setCurrentIndex(1); w.unsave_cb.setChecked(True); w.save_search()
+        c = P.load_criteria(); self.assertEqual((c["saved_jobs"], c["unsave_after_apply"]), ("first", True))
+        profiles.create("Other"); w.switch_profile("Other"); self.assertEqual(w.saved_cb.currentIndex(), 0); self.assertFalse(w.unsave_cb.isChecked()); w.switch_profile("default"); self.assertEqual(w.saved_cb.currentIndex(), 1)
+        w.bthread = FakeThread(); w.saved_b.click(); cmd = w.bthread.q.get_nowait(); self.assertEqual(cmd[0], "run"); self.assertTrue(cmd[6], "⭐ button = saved jobs only"); self.assertFalse(w.saved_b.isEnabled()); self.assertFalse(w.start_b.isEnabled())
+        w.on_finished(0); self.assertTrue(w.saved_b.isEnabled() and w.start_b.isEnabled())
 
     def test_finished_and_error_handlers(self):
         w = self.w; w.on_finished(0); w.on_error("boom"); self.assertTrue(w.start_b.isEnabled()); w.on_error("The browser window was closed")
