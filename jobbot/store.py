@@ -41,6 +41,7 @@ def seen_jobs():
             st = r.get("status") or ""
             if st in ("DRY_RUN", "ERROR"): continue
             if st == "NEEDS_INFO" and norm(r.get("note") or "") in answered: continue
+            if st == "SKIPPED" and "location outside target" in (r.get("note") or "") and not (r.get("location") or "").strip(): continue   # wrongly skipped (location was unreadable): retry
             out.add((r["site"], r["job_id"]))
     return out
 

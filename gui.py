@@ -158,7 +158,7 @@ class Window(QMainWindow):
         self.bthread = None
         split = QSplitter(); split.setMinimumWidth(1250); split.setMinimumHeight(720)
         sa = QScrollArea(); sa.setWidgetResizable(True); sa.setWidget(split); sa.setFrameShape(QFrame.NoFrame); self.setCentralWidget(sa)
-        self.left, self.center, self.right = self.build_left(), self.build_center(), self.build_right()
+        self.left = self.build_left(); self.center = self.build_center(); self.right = self.build_right()      # left first: build_center adds the Controls tab to it
         for w_ in (self.left, self.center, self.right): split.addWidget(w_)
         split.setStretchFactor(1, 1); split.setSizes([400, 800, 480]); self.split = split; self.zoom_pct = 100
         self.dock_timer = QTimer(self); self.dock_timer.timeout.connect(self.dock_tick); self.dock_timer.start(120)
@@ -257,58 +257,12 @@ class Window(QMainWindow):
 
     # ----------------------------------------------------------- CENTRE: toolbar, browser, log
     def build_center(self):
+        """Centre = view toggles + browser + log. All the controls live in the 'Controls' tab of the left panel (build_controls)."""
         w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(4, 4, 4, 4)
-        prow = QHBoxLayout(); prow.addWidget(QLabel("<b>Profile:</b>")); self.pcombo = QComboBox(); self.pcombo.setMinimumWidth(170); prow.addWidget(self.pcombo)
-        for txt, fn in (("＋ New", self.new_profile), ("⧉ Duplicate", lambda: self.new_profile(copy=True)), ("🗑 Delete", self.delete_profile)):
-            pb_ = QPushButton(txt); pb_.clicked.connect(fn); prow.addWidget(pb_)
-        prow.addStretch(); v.addLayout(prow); self.fill_profiles(); self.pcombo.activated.connect(lambda i: self.switch_profile(self.pcombo.itemText(i)))
-        bar = QHBoxLayout()
-        self.start_b = QPushButton("▶ Start applying"); self.start_b.setStyleSheet("background:#1b7f3b;color:white;font-weight:bold;padding:6px 14px"); self.start_b.setMinimumWidth(140)
-        self.stop_b = QPushButton("⏹ Stop"); self.stop_b.setEnabled(False); self.stop_b.setStyleSheet("padding:6px 14px")
-        self.start_b.clicked.connect(self.start); self.stop_b.clicked.connect(self.stop)
-        self.log_b = QPushButton("📄 Log"); self.log_b.setToolTip("Open the run log (errors with full details)"); self.log_b.setStyleSheet("padding:6px 10px"); self.log_b.clicked.connect(self.open_log)
-        self.saved_b = QPushButton("⭐ Apply saved jobs"); self.saved_b.setStyleSheet("padding:6px 10px")
-        self.saved_b.setToolTip("Apply to the jobs in your LinkedIn «Saved jobs» list now (search filters are not applied to them).")
-        self.saved_b.clicked.connect(lambda: self.start(saved_only=True))
-        bar.addWidget(self.start_b); bar.addWidget(self.stop_b); bar.addWidget(self.saved_b); bar.addWidget(self.log_b)
-        bar3_widgets = []
-        for txt, url in (("LinkedIn", "https://www.linkedin.com/login"), ("Indeed", "https://secure.indeed.com/auth?hl=fr_BE"), ("Google", "https://accounts.google.com/")):
-            b = QPushButton(f"🔑 {txt}"); b.clicked.connect(lambda _=False, u=url: self.goto(u)); bar3_widgets.append(b)
         self.tl = QPushButton("◧ Left"); self.tl.setCheckable(True); self.tl.setChecked(True); self.tl.toggled.connect(lambda on: self.left.setVisible(on))
         self.tr = QPushButton("Right ◨"); self.tr.setCheckable(True); self.tr.setChecked(True); self.tr.toggled.connect(lambda on: self.right.setVisible(on))
-        bar2 = QHBoxLayout(); bar2.addWidget(QLabel("View:")); bar2.addWidget(self.tl); bar2.addWidget(self.tr)
-        zm = QPushButton("🔍−"); zp = QPushButton("🔍+"); self.zl = QLabel("100%"); zm.setFixedWidth(40); zp.setFixedWidth(40)
-        zm.clicked.connect(lambda: self.zoom(-10)); zp.clicked.connect(lambda: self.zoom(+10)); self.zl.mouseDoubleClickEvent = lambda e: self.zoom(0)
-        bar2.addSpacing(12); bar2.addWidget(QLabel("Zoom:")); bar2.addWidget(zm)
-        self.zs = QSlider(Qt.Horizontal); self.zs.setRange(30, 250); self.zs.setValue(100); self.zs.setFixedWidth(90); self.zs.setToolTip("Zoom the web page")
-        self.zs.valueChanged.connect(lambda v: self.zoom(v - self.zoom_pct)); bar2.addWidget(self.zs); bar2.addWidget(self.zl); bar2.addWidget(zp)
-        bar2.addSpacing(12); bar2.addWidget(QLabel("Centre:"))
-        self.ps = QSlider(Qt.Horizontal); self.ps.setRange(0, 100); self.ps.setValue(50); self.ps.setFixedWidth(100)
-        self.ps.setToolTip("Slide to move the browser left / right (shifts the space between the left and right panels)"); self.ps.valueChanged.connect(self.slide_center)
-        bar2.addWidget(QLabel("◀")); bar2.addWidget(self.ps); bar2.addWidget(QLabel("▶"))
-        rb = QPushButton("🔄 Reopen browser"); rb.clicked.connect(self.reopen_browser); bar3_widgets.append(rb)
-        ab = QPushButton("ℹ About"); ab.clicked.connect(self.about); bar3_widgets.append(ab)
-        bar.addStretch(); v.addLayout(bar); bar2.addSpacing(12)
-        self.embed_cb = QComboBox(); self.embed_cb.addItems(["Inside (child)", "Docked (follows window)", "Separate window"]); self.embed_cb.setCurrentIndex(0 if sys.platform == "win32" else 2)
-        self.embed_cb.setToolTip("How the browser is shown. Press 🔄 Reopen browser after changing."); self.embedded = False; bar2.addStretch(); v.addLayout(bar2)
-        bar3 = QHBoxLayout()
-        for w_ in bar3_widgets: bar3.addWidget(w_)
-        bar3.addWidget(QLabel("Browser:")); bar3.addWidget(self.embed_cb); bar3.addStretch(); v.addLayout(bar3)
-        # ---- schedule (2 compact rows)
-        sr = QHBoxLayout(); self.sch_on = QCheckBox("⏰ Schedule"); self.sch_on.setMinimumWidth(100)
-        self.sch_on.setToolTip("Start automatically on the chosen days at the chosen hour. Keep this window open and the PC awake.")
-        sr.addWidget(self.sch_on); self.sch_days = []
-        for i, n_ in enumerate(SCH.DAY_NAMES):
-            c = QCheckBox(n_); self.sch_days.append(c); sr.addWidget(c)
-        self.sch_time = QTimeEdit(QTime(9, 0)); self.sch_time.setDisplayFormat("HH:mm"); sr.addWidget(QLabel("at")); sr.addWidget(self.sch_time); sr.addStretch(); v.addLayout(sr)
-        sr2 = QHBoxLayout(); self.sch_retry = QSpinBox(); self.sch_retry.setRange(1, 120); self.sch_retry.setValue(5); self.sch_retry.setSuffix(" min")
-        self.sch_retry.setToolTip("After a LinkedIn limit: test again every N minutes until the restriction is lifted, then continue automatically.")
-        sr2.addWidget(QLabel("After a LinkedIn limit, test again every")); sr2.addWidget(self.sch_retry)
-        self.sch_lbl = QLabel("Schedule off"); self.sch_lbl.setStyleSheet("color:#555"); sr2.addSpacing(12); sr2.addWidget(self.sch_lbl, 1); v.addLayout(sr2)
-        for w_ in [self.sch_on, self.sch_time, self.sch_retry] + self.sch_days:
-            (w_.toggled if isinstance(w_, QCheckBox) else w_.timeChanged if isinstance(w_, QTimeEdit) else w_.valueChanged).connect(lambda *_: self.sch_changed())
-        self.sched = None; self._auto_run = False; self._sch_loading = False
-        self.sch_timer = QTimer(self); self.sch_timer.timeout.connect(self.sch_tick); self.sch_timer.start(15000)
+        vb = QHBoxLayout(); vb.addWidget(QLabel("View:")); vb.addWidget(self.tl); vb.addWidget(self.tr); vb.addStretch(); v.addLayout(vb)
+        self.build_controls()
         self.host = QWidget(); self.host_l = QVBoxLayout(self.host); self.host_l.setContentsMargins(0, 0, 0, 0)
         self.host_info = QLabel("Starting browser…"); self.host_info.setAlignment(Qt.AlignCenter); self.host_l.addWidget(self.host_info)
         v.addWidget(self.host, 1)
@@ -317,6 +271,65 @@ class Window(QMainWindow):
         self.pause_box.hide(); v.addWidget(self.pause_box)
         self.logw = QPlainTextEdit(); self.logw.setReadOnly(True); self.logw.setMaximumHeight(170); v.addWidget(self.logw)
         return w
+
+    def build_controls(self):
+        """Profile, start/stop, zoom, browser and schedule controls, laid out in rows that fit the narrow left panel."""
+        c = QWidget(); cv = QVBoxLayout(c); cv.setContentsMargins(6, 6, 6, 6); cv.setSpacing(6)
+        prow = QHBoxLayout(); prow.addWidget(QLabel("<b>Profile:</b>")); self.pcombo = QComboBox(); self.pcombo.setMinimumWidth(150); prow.addWidget(self.pcombo, 1); cv.addLayout(prow)
+        prow2 = QHBoxLayout()
+        for txt, fn in (("＋ New", self.new_profile), ("⧉ Duplicate", lambda: self.new_profile(copy=True)), ("🗑 Delete", self.delete_profile)):
+            pb_ = QPushButton(txt); pb_.clicked.connect(fn); prow2.addWidget(pb_)
+        cv.addLayout(prow2); self.fill_profiles(); self.pcombo.activated.connect(lambda i: self.switch_profile(self.pcombo.itemText(i)))
+        self.start_b = QPushButton("▶ Start applying"); self.start_b.setStyleSheet("background:#1b7f3b;color:white;font-weight:bold;padding:6px 14px"); self.start_b.setMinimumWidth(140)
+        self.stop_b = QPushButton("⏹ Stop"); self.stop_b.setEnabled(False); self.stop_b.setStyleSheet("padding:6px 14px")
+        self.start_b.clicked.connect(self.start); self.stop_b.clicked.connect(self.stop)
+        self.log_b = QPushButton("📄 Log"); self.log_b.setToolTip("Open the run log (errors with full details)"); self.log_b.setStyleSheet("padding:6px 10px"); self.log_b.clicked.connect(self.open_log)
+        self.saved_b = QPushButton("⭐ Apply saved jobs"); self.saved_b.setStyleSheet("padding:6px 10px")
+        self.saved_b.setToolTip("Apply to the jobs in your LinkedIn «Saved jobs» list now (search filters are not applied to them).")
+        self.saved_b.clicked.connect(lambda: self.start(saved_only=True))
+        r1 = QHBoxLayout(); r1.addWidget(self.start_b, 2); r1.addWidget(self.stop_b, 1); cv.addLayout(r1)
+        r2 = QHBoxLayout(); r2.addWidget(self.saved_b, 2); r2.addWidget(self.log_b, 1); cv.addLayout(r2)
+        zm = QPushButton("🔍−"); zp = QPushButton("🔍+"); self.zl = QLabel("100%"); zm.setFixedWidth(40); zp.setFixedWidth(40)
+        zm.clicked.connect(lambda: self.zoom(-10)); zp.clicked.connect(lambda: self.zoom(+10)); self.zl.mouseDoubleClickEvent = lambda e: self.zoom(0)
+        self.zs = QSlider(Qt.Horizontal); self.zs.setRange(30, 250); self.zs.setValue(100); self.zs.setToolTip("Zoom the web page")
+        self.zs.valueChanged.connect(lambda v: self.zoom(v - self.zoom_pct))
+        z = QHBoxLayout(); z.addWidget(QLabel("Zoom:")); z.addWidget(zm); z.addWidget(self.zs, 1); z.addWidget(self.zl); z.addWidget(zp); cv.addLayout(z)
+        self.ps = QSlider(Qt.Horizontal); self.ps.setRange(0, 100); self.ps.setValue(50)
+        self.ps.setToolTip("Slide to move the browser left / right (shifts the space between the left and right panels)"); self.ps.valueChanged.connect(self.slide_center)
+        p = QHBoxLayout(); p.addWidget(QLabel("Centre:")); p.addWidget(QLabel("◀")); p.addWidget(self.ps, 1); p.addWidget(QLabel("▶")); cv.addLayout(p)
+        btns = []
+        for txt, url in (("LinkedIn", "https://www.linkedin.com/login"), ("Indeed", "https://secure.indeed.com/auth?hl=fr_BE"), ("Google", "https://accounts.google.com/")):
+            b = QPushButton(f"🔑 {txt}"); b.clicked.connect(lambda _=False, u=url: self.goto(u)); btns.append(b)
+        lg = QHBoxLayout()
+        for b in btns: lg.addWidget(b)
+        cv.addLayout(lg)
+        rb = QPushButton("🔄 Reopen browser"); rb.clicked.connect(self.reopen_browser)
+        ab = QPushButton("ℹ About"); ab.clicked.connect(self.about)
+        ra = QHBoxLayout(); ra.addWidget(rb, 2); ra.addWidget(ab, 1); cv.addLayout(ra)
+        self.embed_cb = QComboBox(); self.embed_cb.addItems(["Inside (child)", "Docked (follows window)", "Separate window"]); self.embed_cb.setCurrentIndex(0 if sys.platform == "win32" else 2)
+        self.embed_cb.setToolTip("How the browser is shown. Press 🔄 Reopen browser after changing."); self.embedded = False
+        bb = QHBoxLayout(); bb.addWidget(QLabel("Browser:")); bb.addWidget(self.embed_cb, 1); cv.addLayout(bb)
+        # ---- schedule
+        sr = QHBoxLayout(); self.sch_on = QCheckBox("⏰ Schedule")
+        self.sch_on.setToolTip("Start automatically on the chosen days at the chosen hour. Keep this window open and the PC awake.")
+        sr.addWidget(self.sch_on); self.sch_time = QTimeEdit(QTime(9, 0)); self.sch_time.setDisplayFormat("HH:mm"); self.sch_time.setMinimumWidth(80)
+        sr.addStretch(); sr.addWidget(QLabel("at")); sr.addWidget(self.sch_time); cv.addLayout(sr)
+        self.sch_days = []
+        d1, d2 = QHBoxLayout(), QHBoxLayout()
+        for i, n_ in enumerate(SCH.DAY_NAMES):
+            cb = QCheckBox(n_); self.sch_days.append(cb); (d1 if i < 4 else d2).addWidget(cb)
+        d2.addStretch(); cv.addLayout(d1); cv.addLayout(d2)
+        self.sch_retry = QSpinBox(); self.sch_retry.setRange(1, 120); self.sch_retry.setValue(5); self.sch_retry.setSuffix(" min")
+        self.sch_retry.setToolTip("After a LinkedIn limit: test again every N minutes until the restriction is lifted, then continue automatically.")
+        sr2 = QHBoxLayout(); lb = QLabel("After a LinkedIn limit, test again every"); lb.setWordWrap(True); sr2.addWidget(lb, 1); sr2.addWidget(self.sch_retry); cv.addLayout(sr2)
+        self.sch_lbl = QLabel("Schedule off"); self.sch_lbl.setStyleSheet("color:#555"); cv.addWidget(self.sch_lbl)
+        for w_ in [self.sch_on, self.sch_time, self.sch_retry] + self.sch_days:
+            (w_.toggled if isinstance(w_, QCheckBox) else w_.timeChanged if isinstance(w_, QTimeEdit) else w_.valueChanged).connect(lambda *_: self.sch_changed())
+        self.sched = None; self._auto_run = False; self._sch_loading = False
+        self.sch_timer = QTimer(self); self.sch_timer.timeout.connect(self.sch_tick); self.sch_timer.start(15000)
+        cv.addStretch()
+        sa = QScrollArea(); sa.setWidgetResizable(True); sa.setWidget(c); sa.setFrameShape(QFrame.NoFrame)
+        self.left.insertTab(0, sa, "Controls"); self.left.setCurrentIndex(0)
 
     def about(self):
         QMessageBox.about(self, "About Job Apply Bot", f"<h3>Job Apply Bot {__version__}</h3><p>Created by <b><a href='{CREDIT_URL}'>MiFactory — mifactory.ma</a></b><br>"

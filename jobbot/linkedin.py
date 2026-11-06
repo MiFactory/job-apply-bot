@@ -8,9 +8,9 @@ from . import popups
 LIMIT_RE = re.compile(r"(daily|weekly|easy apply|application)s? limit|limit(e|s)? (has been |was )?reached|reached (the |your |today.s )?(daily |weekly )?(easy apply |application )?limit"
                       r"|limite (quotidienne|journalière|de candidatures|atteinte)|atteint (la|votre) limite|limiet (bereikt|van)|(dagelijkse|dagelijks) limiet|bereikt.{0,30}limiet", re.I)
 BTN = {
- "next": r"continue to next step|next|passer à l.étape suivante|suivant|volgende",
- "review": r"review your application|vérifier votre candidature|review|controleren",
- "submit": r"submit application|envoyer la candidature|soumettre|verzenden|sollicitatie versturen",
+ "next": r"continue to next step|next|passer à l.étape suivante|suivant|continuer|volgende|weiter|siguiente",
+ "review": r"review your application|review|vérifier votre candidature|v[ée]rifier|controleren|nakijken|bekijken|überprüfen|revisar",
+ "submit": r"submit application|submit|envoyer la candidature|envoyer|soumettre|postuler|verzenden|sollicitatie versturen|absenden|enviar solicitud",
 }
 
 class LimitReached(Exception): pass
@@ -145,16 +145,31 @@ def read_detail(page):
     desc = g("#job-details, .jobs-description__content, .jobs-box__html-content")
     return title, company, loc.split("·")[0].strip(), desc
 
+BLOCKED = {}          # key -> label of a matching button that is visible but really disabled (a required field / an upload is pending)
+
 def click_btn(modal, key, click=True):
     """Find the visible button for `key`; click it unless click=False (used by --dry-run: look, never press Submit)."""
     for b in modal.locator("button").all():
         try:
-            t = ((b.get_attribute("aria-label") or "") + " " + b.inner_text()).strip()
-            if re.search(BTN[key], t, re.I) and b.is_visible() and b.is_enabled():
-                if click: b.click()
-                return True
+            t = unicodedata.normalize("NFC", ((b.get_attribute("aria-label") or "") + " " + b.inner_text())).strip()      # NFC: "é" may arrive as "e" + accent
+            if not (re.search(BTN[key], t, re.I) and b.is_visible()): continue
+            if not b.is_enabled():           # Playwright also inherits aria-disabled from a parent: only trust the button's own state
+                if b.evaluate("e => e.disabled === true || e.getAttribute('aria-disabled') === 'true'"):
+                    BLOCKED[key] = re.sub(r"\s+", " ", t)[:30]; continue
+            if click:
+                try: b.click(timeout=4000)
+                except Exception: b.evaluate("e => e.click()")
+            return True
         except Exception: pass
     return False
+
+DESCRIBE_JS = """(root) => {
+  const vis = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+  const btn = [...root.querySelectorAll('button')].filter(vis).map(b => ((b.innerText || b.getAttribute('aria-label') || '').trim().slice(0, 18)) + ((b.disabled || b.getAttribute('aria-disabled') === 'true') ? ' [DISABLED]' : ''));
+  const empty = [...root.querySelectorAll('input:not([type=hidden]):not([type=file]), select, textarea')].filter(e => vis(e) && (e.required || e.getAttribute('aria-required') === 'true') && !(e.type === 'radio' || e.type === 'checkbox' ? e.checked : (e.value || '').trim() && !/^(select|s.lectionnez)/i.test(e.selectedOptions && e.selectedOptions[0] ? e.selectedOptions[0].text : ''))).map(e => (e.getAttribute('aria-label') || e.name || e.id || e.tagName).slice(0, 40));
+  const err = [...root.querySelectorAll('[role=alert], .artdeco-inline-feedback--error')].map(e => e.innerText.trim()).filter(Boolean).slice(0, 3);
+  return {buttons: btn, required_empty: empty, errors: err};
+}"""
 
 APPLY_RE = re.compile(r"easy apply|candidature simplifi[ée]e|eenvoudig solliciteren|continue application|continuer la candidature|reprendre|doorgaan met solliciteren", re.I)
 
@@ -185,7 +200,9 @@ def easy_apply(page, filler, resume_path, dry_run):
     modal = page.locator("dialog[open], div[role=dialog], .jobs-easy-apply-modal").first      # new layout: native <dialog open>
     if not modal.count(): return "SKIP", "modal did not open"
     if LIMIT_RE.search(modal.inner_text()[:600]): raise LimitReached(modal.inner_text()[:200])
-    for _ in range(14):
+    waits = 0
+    for _ in range(26):
+        BLOCKED.clear()
         filler.fill(modal, resume_path)
         page.wait_for_timeout(400)
         # uncheck "follow company"
@@ -210,8 +227,18 @@ def easy_apply(page, filler, resume_path, dry_run):
             if err.count() and err.first.is_visible():
                 raise NeedInfo("form error: " + err.first.inner_text()[:120])
             continue
+        try: only_dismiss = len([1 for x in modal.locator("button").all() if x.is_visible()]) <= 1     # form still loading: only the X button is there
+        except Exception: only_dismiss = False
+        if (BLOCKED or only_dismiss) and waits < 8:                                      # the button exists but is disabled: an upload / a required field is still being processed
+            waits += 1; logger.info(f"WAIT {waits}/8: " + (f"button {BLOCKED} is disabled" if BLOCKED else "form still loading"))
+            page.wait_for_timeout(1500); continue
         try: btns = [re.sub(r"\s+", " ", (b.inner_text() or b.get_attribute("aria-label") or "")).strip()[:25] for b in modal.locator("button").all() if b.is_visible()]
         except Exception: btns = []
+        try: diag = modal.evaluate(DESCRIBE_JS)
+        except Exception as e: diag = {"error": str(e)[:80]}
+        logger.info(f"DIAG {diag}")
+        if BLOCKED:
+            raise NeedInfo(f"button '{list(BLOCKED.values())[0]}' stays disabled — required field(s) not filled: {diag.get('required_empty') or '?'} {diag.get('errors') or ''}")
         logger.info(f"NO NEXT BUTTON url={page.url[:80]} buttons={btns} text={re.sub(chr(10)+'+', ' / ', modal.inner_text()[:400])}")
         raise NeedInfo(f"could not find next/submit button (buttons: {btns})")
     raise NeedInfo("too many steps")
@@ -309,7 +336,10 @@ def run(page, profile, criteria, max_apps, dry_run, interactive, asker=None, mot
                         if company.lower() in [c.lower() for c in criteria["exclude_companies"]]:
                             store.log_application("linkedin", jid, title, company, loc_txt, url, "SKIPPED", "excluded company"); seen.add(("linkedin", jid)); HOOKS["log"](f"   ⏭ skipped: {title} @ {company} — excluded company"); continue
                         sc, why = P.score_job(title, desc, criteria)
-                        if not P.location_ok(loc_txt, criteria): sc, why = 0, f"location outside target: {loc_txt}"
+                        if not loc_txt.strip():                           # detail pane gave no location (tab-title fallback): take it from the result card
+                            loc_txt = next((l.strip() for l in card_txt.splitlines() if re.search(r"belg|bruxel|brussel|wallon|vlaan|flan|r[ée]gion|gewest", l, re.I)), "")
+                        # unknown location => keep the job (the search itself is already filtered by location); reject only a location we really read
+                        if loc_txt.strip() and not P.location_ok(loc_txt, criteria): sc, why = 0, f"location outside target: {loc_txt}"
                         if sc < criteria["min_score"]:
                             store.log_application("linkedin", jid, title, company, loc_txt, url, "SKIPPED", why); seen.add(("linkedin", jid)); skipped += 1
                             HOOKS["log"](f"   ⏭ skipped: {title} @ {company} ({loc_txt}) — {why}"); continue

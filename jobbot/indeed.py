@@ -49,7 +49,7 @@ def run(page, profile, criteria, max_apps, dry_run, interactive, asker=None, mot
                         desc = g("#jobDescriptionText"); url = f"https://{domain_for(loc)}/viewjob?jk={jid}"
                         if not title: raise TimeoutError("job details did not load")     # never log an unreadable page as SKIPPED
                         sc, why = P.score_job(title, desc, criteria)
-                        if not P.location_ok(locn, criteria): sc, why = 0, f"location outside target: {locn}"
+                        if (locn or '').strip() and not P.location_ok(locn, criteria): sc, why = 0, f"location outside target: {locn}"
                         if sc < criteria["min_score"] or company.lower() in [c.lower() for c in criteria["exclude_companies"]]:
                             store.log_application("indeed", jid, title, company, locn, url, "SKIPPED", why); seen.add(("indeed", jid)); continue
                         btn = page.locator("#indeedApplyButton, button:has-text('Postuler maintenant'), button:has-text('Apply now'), button:has-text('Easily apply')").first

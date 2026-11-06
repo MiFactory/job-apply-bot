@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.9
+- **Every offer was skipped ("location outside target: ")**: when LinkedIn's detail pane could not be read, the location came back empty and was rejected. The location is now taken from the result card; if it is still unknown the offer is kept (the search is already filtered by location) and only a location that was really read and is wrong is rejected. Same guard on Indeed.
+- **Wrongly skipped offers are retried**: offers saved as SKIPPED with an empty location (the bug above) are no longer remembered as "already handled". The log now says `N/25 card(s) of this page were already handled in an earlier run`.
+- **French "Vérifier" (Review) button** was not recognised ("could not find next/submit button", then the "Enregistrer cette candidature ?" window). Next / Review / Submit labels now cover FR / NL / DE / ES, with accent normalisation; a button that is only *visually* disabled is clicked anyway, a really disabled one is waited for (up to ~12 s), and the log gets a `DIAG` line (buttons, empty required fields, errors) when a step still blocks.
+- **CV step**: the CV is no longer re-uploaded at every pass (duplicate CVs, locked buttons); if it is already listed it is selected by click.
+- **Radio options ("Are you comfortable commuting…?") stayed unticked** on the new LinkedIn form (hidden input, empty label): new `click_radio` tries native check, label, DOM click, the text beside it and the keyboard, and verifies the option is really ticked — otherwise it stops with a clear message instead of looping ("too many steps").
+- Form not loaded yet (only the X button visible): the bot waits instead of giving up.
+- **GUI**: all controls (profile, Start/Stop, zoom, browser, schedule) moved into a new **Controls** tab on the left; rows re-flowed so nothing is clipped.
+- `publish_to_github.sh`: repeatable publish/update script with tests and a guard that refuses to stage personal data.
+
 ## 1.3.8
 - **Session lost / security check**: when LinkedIn shows its login, a "challenge" check or the logged-out page (cookie banner "Mise à jour de nos conditions générales" was read as a job title), the bot now pauses with a Continue button, reloads the page after you log in, and stops cleanly if it stays blocked — no more "0 job cards" loops or wrong jobs.
 - **CV-choice step** ("54 Ko · Dernière utilisation le …") is no longer treated as a question (NEEDS_INFO with empty options).

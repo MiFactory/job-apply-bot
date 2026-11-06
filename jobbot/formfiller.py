@@ -1,5 +1,5 @@
 """Generic form filler: maps field labels → profile values → remembered answers → ask the user."""
-import re
+import os, re
 from . import store
 from .answerer import Auto
 
@@ -165,6 +165,30 @@ def timed_input(prompt, seconds=0):
         print(); return None
 
 
+def click_radio(scope, g):
+    """Tick one radio and VERIFY it is checked. LinkedIn's new form hides the input and its label is empty (the text 'Yes' sits in a sibling <p>),
+    so a plain check(force=True) only focuses it. Try: native check → label[for] → DOM click → click the text block next to it → keyboard."""
+    def done():
+        try: return g.is_checked()
+        except Exception: return False
+    steps = (
+        lambda: g.check(force=True, timeout=2000),
+        lambda: scope.locator('label[for="%s"]' % g.get_attribute("id")).first.click(force=True, timeout=2000),
+        lambda: g.evaluate("e => e.click()"),
+        lambda: g.evaluate("e => { const n = (e.parentElement && e.parentElement.nextElementSibling) || e.nextElementSibling; if (n) n.click(); }"),
+        lambda: (g.focus(), g.press("Space")),
+    )
+    for step in steps:
+        try: step()
+        except Exception: pass
+        if done(): return True
+        try: g.page.wait_for_timeout(150)
+        except Exception: pass
+        if done(): return True
+    return False
+
+
+
 class Filler:
     def __init__(self, profile, criteria, interactive=True, asker=None, motivation=None):
         self.p, self.c, self.interactive, self.asker = profile, criteria, interactive, asker
@@ -234,7 +258,16 @@ class Filler:
         for fi in scope.locator("input[type=file]").all():
             try:
                 if resume_path and fi.is_visible() or (resume_path and fi.count()):
-                    fi.set_input_files(resume_path); n += 1
+                    name = os.path.basename(resume_path)
+                    try: listed = name.lower() in (scope.inner_text(timeout=1500) or "").lower()
+                    except Exception: listed = False
+                    if listed:                                  # this CV is already in LinkedIn's list: do not upload it again (duplicates, locked buttons) — just make sure it is the selected one
+                        try:
+                            if not scope.locator("input[type=radio]:checked").count():
+                                scope.get_by_text(name, exact=False).first.click(timeout=2000); n += 1
+                        except Exception: pass
+                    else:
+                        fi.set_input_files(resume_path); n += 1
             except Exception: pass
         # text / number / textarea
         for el in scope.locator("input:not([type=hidden]):not([type=file]):not([type=submit]):not([type=button]):not([type=radio]):not([type=checkbox]), textarea").all():
@@ -283,8 +316,7 @@ class Filler:
                 o = pick_option(labs, want) or self.fallback_option(label, "radio", labs)
                 if not o: raise NeedInfo(f"{label} (options {labs})")
                 i = labs.index(o)
-                try: grp.nth(i).check(force=True)
-                except Exception: scope.locator(f'label:has-text("{o}")').first.click()
+                if not click_radio(scope, grp.nth(i)): raise NeedInfo(f"{label} (could not tick the option '{o}' — options {labs})")
                 n += 1
             except NeedInfo: raise
             except Exception: continue
