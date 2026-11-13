@@ -194,6 +194,8 @@ class Window(QMainWindow):
         self.excl = QPlainTextEdit(", ".join(self.crit["exclude"])); self.excl.setFixedHeight(60)
         self.must = QLineEdit(", ".join(self.crit["must_have_any"])); self.days = QSpinBox(); self.days.setRange(1, 90); self.days.setValue(self.crit["posted_within_days"])
         self.maxrun = QSpinBox(); self.maxrun.setRange(1, 200); self.maxrun.setValue(30)
+        self.par = QSpinBox(); self.par.setRange(1, 10); self.par.setSpecialValueText("1 — one by one (off)"); self.par.setValue(self._par_value())
+        self.par.setToolTip("How many applications the bot handles at the same time, each in its own browser tab (LinkedIn). 1 = one by one, as before. Up to 10: the pages load and the forms are filled together, which saves time — but many tabs at once can make LinkedIn ask for a security check sooner, so start with 3.")
         self.tmo = QSpinBox(); self.tmo.setRange(2, 300); self.tmo.setSuffix(" s"); self.tmo.setValue(int(self.crit.get("timeout_seconds", 15)))
         self.tmo.setToolTip("How long a click or page may wait before the job is skipped (default 15 s). Raise it on a slow connection; lower it to skip stuck pop-ups faster.")
         self.ans_tmo = QSpinBox(); self.ans_tmo.setRange(0, 600); self.ans_tmo.setSuffix(" s"); self.ans_tmo.setSpecialValueText("wait forever"); self.ans_tmo.setValue(int(self.crit.get("answer_timeout_seconds", 30)))
@@ -208,7 +210,7 @@ class Window(QMainWindow):
         self.cb_li = QCheckBox("LinkedIn"); self.cb_li.setChecked("linkedin" in self.crit["sites"]); self.cb_in = QCheckBox("Indeed"); self.cb_in.setChecked("indeed" in self.crit["sites"])
         self.dry = QCheckBox("Dry-run (fill forms but do NOT submit)"); self.dry.setChecked(True)
         f.addRow("Job titles (1 per line)", self.titles); f.addRow("Locations (1 per line)", self.locs); f.addRow("Exclude words in title", self.excl)
-        f.addRow("Must contain any (optional)", self.must); f.addRow("Posted within (days)", self.days); f.addRow("Max applications this run", self.maxrun); f.addRow("Timeout per click / page", self.tmo); f.addRow("Wait for my answer", self.ans_tmo); f.addRow(self.auto_cb); f.addRow("Saved jobs", self.saved_cb); f.addRow(self.unsave_cb); f.addRow(self.draft_cb)
+        f.addRow("Must contain any (optional)", self.must); f.addRow("Posted within (days)", self.days); f.addRow("Max applications this run", self.maxrun); f.addRow("Applications at the same time", self.par); f.addRow("Timeout per click / page", self.tmo); f.addRow("Wait for my answer", self.ans_tmo); f.addRow(self.auto_cb); f.addRow("Saved jobs", self.saved_cb); f.addRow(self.unsave_cb); f.addRow(self.draft_cb)
         f.addRow(self.easy); r = QHBoxLayout(); r.addWidget(self.cb_li); r.addWidget(self.cb_in); f.addRow("Sites", r); f.addRow(self.dry)
         sv2 = QPushButton("💾 Save search settings"); sv2.clicked.connect(self.save_search); f.addRow(sv2)
         tabs.addTab(s, "Search criteria")
@@ -240,6 +242,10 @@ class Window(QMainWindow):
 
     def remove_cv(self, lang): self.prof["cv_files"][lang] = ""; QTimer.singleShot(0, self.refresh_cvs)
 
+    def _par_value(self):
+        from jobbot import parallel
+        return parallel.clamp(self.crit.get("parallel_applications", 1))
+
     def save_left(self, silent=False):
         self.motiv[self._mot_cur] = self.mot_edit.toPlainText(); self.prof["default_cv_lang"] = self.def_lang.currentText()
         P.save(P.PROFILE, self.prof); motiv_path().write_text(json.dumps(self.motiv, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -250,7 +256,7 @@ class Window(QMainWindow):
                          locations=[t.strip() for t in self.locs.toPlainText().splitlines() if t.strip()],
                          exclude=[t.strip() for t in self.excl.toPlainText().replace("\n", ",").split(",") if t.strip()],
                          must_have_any=[t.strip() for t in self.must.text().split(",") if t.strip()],
-                         posted_within_days=self.days.value(), easy_apply_only=self.easy.isChecked(), timeout_seconds=self.tmo.value(), answer_timeout_seconds=self.ans_tmo.value(), auto_answer=self.auto_cb.isChecked(),
+                         posted_within_days=self.days.value(), easy_apply_only=self.easy.isChecked(), timeout_seconds=self.tmo.value(), parallel_applications=self.par.value(), answer_timeout_seconds=self.ans_tmo.value(), auto_answer=self.auto_cb.isChecked(),
                          saved_jobs=self.SAVED_MODES[self.saved_cb.currentIndex()], unsave_after_apply=self.unsave_cb.isChecked(), include_drafts=self.draft_cb.isChecked(),
                          sites=[s for s, c in (("linkedin", self.cb_li), ("indeed", self.cb_in)) if c.isChecked()])
         P.save(P.CRITERIA, self.crit); self.append_log("💾 search settings saved")
@@ -390,7 +396,7 @@ class Window(QMainWindow):
         self.fill_profiles(); self.setWindowTitle(f"Job Apply Bot {__version__} — {profiles.active()}")
         self.titles.setPlainText("\n".join(self.crit["titles"])); self.locs.setPlainText("\n".join(self.crit["locations"]))
         self.excl.setPlainText(", ".join(self.crit["exclude"])); self.must.setText(", ".join(self.crit["must_have_any"]))
-        self.days.setValue(self.crit["posted_within_days"]); self.easy.setChecked(self.crit["easy_apply_only"]); self.tmo.setValue(int(self.crit.get("timeout_seconds", 15))); self.ans_tmo.setValue(int(self.crit.get("answer_timeout_seconds", 30))); self.auto_cb.setChecked(bool(self.crit.get("auto_answer", True)))
+        self.days.setValue(self.crit["posted_within_days"]); self.easy.setChecked(self.crit["easy_apply_only"]); self.tmo.setValue(int(self.crit.get("timeout_seconds", 15))); self.par.setValue(self._par_value()); self.ans_tmo.setValue(int(self.crit.get("answer_timeout_seconds", 30))); self.auto_cb.setChecked(bool(self.crit.get("auto_answer", True)))
         sm = self.crit.get("saved_jobs", "off"); self.saved_cb.setCurrentIndex(self.SAVED_MODES.index(sm) if sm in self.SAVED_MODES else 0); self.unsave_cb.setChecked(bool(self.crit.get("unsave_after_apply", False))); self.draft_cb.setChecked(bool(self.crit.get("include_drafts", True)))
         self.cb_li.setChecked("linkedin" in self.crit["sites"]); self.cb_in.setChecked("indeed" in self.crit["sites"])
         self.def_lang.setCurrentText(self.prof.get("default_cv_lang", "en"))
@@ -590,7 +596,7 @@ class Window(QMainWindow):
         B.HOOKS["stop"] = False; self.start_b.setEnabled(False); self.saved_b.setEnabled(False); self.stop_b.setEnabled(True)
         sites = self.crit["sites"]; mx = self.maxrun.value(); dry = self.dry.isChecked()
         mot = dict(self.motiv)
-        self.append_log(f"▶ start — {'⭐ saved jobs only' if saved_only else 'saved=' + self.crit.get('saved_jobs', 'off')} sites={sites} max={mx} dry_run={dry}")
+        self.append_log(f"▶ start — {'⭐ saved jobs only' if saved_only else 'saved=' + self.crit.get('saved_jobs', 'off')} sites={sites} max={mx} parallel={self.crit.get('parallel_applications', 1)} dry_run={dry}")
         self.bthread.q.put(("run", sites, mx, dry, dict(self.motiv), bool(auto), bool(saved_only)))
 
     def open_log(self):
@@ -674,7 +680,14 @@ class QInputDialogText:
 
 def _closing(w):
     w.release_embed()
-    if w.bthread: w.bthread.q.put(("quit",)); w.bthread.join(5)
+    B.HOOKS["stop"] = True                       # ask a running job loop to stop, otherwise the thread never reads "quit"
+    if w.bthread:
+        w.bthread.q.put(("quit",)); w.bthread.join(20)   # lets Browser.__exit__ close Chrome + stop the Playwright driver cleanly
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv); w = Window(); w.show(); app.aboutToQuit.connect(lambda: _closing(w)); sys.exit(app.exec())
+    import signal
+    app = QApplication(sys.argv); w = Window(); w.show(); app.aboutToQuit.connect(lambda: _closing(w))
+    # Ctrl+C in the terminal = clean shutdown (closes Chrome + Playwright) instead of killing Python and leaving an orphan Chrome / EPIPE
+    signal.signal(signal.SIGINT, lambda *a: app.quit())
+    _sig = QTimer(); _sig.timeout.connect(lambda: None); _sig.start(300)      # lets Python run the signal handler while Qt is busy
+    sys.exit(app.exec())

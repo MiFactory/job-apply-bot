@@ -37,6 +37,19 @@ HOOKS = {"pause": None, "stop": False, "log": print, "result": ""}   # result: "
 
 def should_stop(): return HOOKS["stop"]
 
+def goto(page, url, tries=3):
+    """page.goto that survives site redirects ("interrupted by another navigation" / ERR_ABORTED): wait for the redirect to settle, retry."""
+    for i in range(tries):
+        try: return page.goto(url, wait_until="domcontentloaded")
+        except Exception as e:
+            m = str(e)
+            if i < tries - 1 and ("interrupted by another navigation" in m or "ERR_ABORTED" in m):
+                try: page.wait_for_load_state("domcontentloaded", timeout=10000)
+                except Exception: pass
+                page.wait_for_timeout(1500); continue
+            if "interrupted by another navigation" in m or "ERR_ABORTED" in m: return None   # the redirect target is loaded; carry on
+            raise
+
 def pause_for_human(msg):
     if HOOKS["pause"]:
         return HOOKS["pause"](msg)       # GUI: shows a "Continue" button

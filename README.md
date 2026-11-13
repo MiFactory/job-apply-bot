@@ -72,6 +72,16 @@ Apply to the jobs you saved on LinkedIn (*My items › Saved jobs*). Your search
 * Closed jobs ("no longer accepting applications") and jobs that need the company's site are logged once as `SKIPPED` (note starts with `saved:`) and not reopened. Jobs earlier skipped by the search filters, or that needed an answer, are retried.
 * Start with `--dry-run --saved only --max 3` to check it works with your LinkedIn page.
 
+## Several applications at the same time
+
+By default the bot applies **one job at a time**. Set *Search criteria › Applications at the same time* (or `--parallel N`, or `"parallel_applications": N` in `criteria.json`) to a value from **2 to 10** and it opens that many browser tabs, one per job, loads them together and fills the forms in turn while the other tabs are loading or waiting. Set it back to **1** to apply one by one.
+
+* Works for LinkedIn search results and for saved jobs / drafts. Indeed is still handled one by one.
+* Your caps are respected: a batch never opens more tabs than what is left of *Max applications this run* and of the daily cap.
+* An unknown question, a login or a security check pauses all the tabs until you answer. *Stop* closes the open tabs and discards their unfinished forms; a LinkedIn limit met in one tab stops the others the same way.
+* Log lines of a tab start with `[tab N]`.
+* Many tabs opened at once look less like a person: LinkedIn may show its security check or its daily limit sooner. Start with 3 and a `--dry-run`.
+
 ## Pop-ups and timeouts
 
 After *Submit*, LinkedIn shows a post-apply window; closing it asks *Supprimer de votre candidature ?*. The bot now closes such pop-ups itself (it only presses *Supprimer / Discard* on confirmations that say your profile is not affected, or on its own unfinished application, and never on unknown dialogs). If something still blocks a click, the job is skipped after the **timeout** (default 15 s, adjustable in *Search criteria › Timeout per click / page* or `--timeout`) and retried on a later run.

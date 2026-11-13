@@ -32,6 +32,7 @@ DEFAULT_CRITERIA = {
     "saved_jobs": "off",        # LinkedIn «Saved jobs»: off | first (apply to saved jobs, then search) | only
     "include_drafts": True,     # saved-jobs runs also finish your LinkedIn drafts («Brouillon» / unsent applications)
     "unsave_after_apply": False,  # remove a saved job from your Saved list once applied
+    "parallel_applications": 1, # applications handled at the same time, each in its own browser tab: 1 = one by one (off), up to 10 (GUI: Search criteria › Applications at the same time; CLI: --parallel)
     "timeout_seconds": 15,      # how long a click / page may wait before the job is skipped (GUI: Search criteria › Timeout)
     "answer_timeout_seconds": 30,   # wait this long for YOUR answer to an unknown form question (0 = forever), then …
     "auto_answer": True,            # … answer from the CV / profile / earlier answers (marked «auto»; sensitive questions are never guessed)

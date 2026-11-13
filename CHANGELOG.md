@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.0
+- **Several applications at the same time** (new setting *Applications at the same time*, `parallel_applications`, CLI `--parallel 1..10`; default **1 = one by one**, as before). With 2–10 the bot opens one browser tab per job, loads them together and fills the forms in turn while the other tabs load or wait. LinkedIn search results and saved jobs / drafts; Indeed stays one by one.
+- The run and daily caps cannot be exceeded: a batch never opens more tabs than what is left. A login / security check found in the tabs asks you **once**, then those jobs are opened again. *Stop* and a LinkedIn limit close the other tabs and discard their unfinished forms (those jobs are retried next run). Log lines of a tab start with `[tab N]`.
+- New module `jobbot/parallel.py` (cooperative scheduler, one thread — Playwright's sync API is not thread-safe); the Easy Apply loop now yields its pauses instead of sleeping. One-by-one behaviour is unchanged.
+
 ## 1.3.9
 - **Every offer was skipped ("location outside target: ")**: when LinkedIn's detail pane could not be read, the location came back empty and was rejected. The location is now taken from the result card; if it is still unknown the offer is kept (the search is already filtered by location) and only a location that was really read and is wrong is rejected. Same guard on Indeed.
 - **Wrongly skipped offers are retried**: offers saved as SKIPPED with an empty location (the bug above) are no longer remembered as "already handled". The log now says `N/25 card(s) of this page were already handled in an earlier run`.

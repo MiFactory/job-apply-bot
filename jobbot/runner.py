@@ -31,6 +31,12 @@ def run_jobs(page, prof, crit, sites, max_apps, dry_run, interactive=True, asker
     if dry_run: HOOKS["log"]("ℹ DRY RUN is ON: forms are filled but NOTHING is submitted. Untick 'Dry-run' to really apply.")
     HOOKS["result"] = ""; prof = resolve_cvs(prof); total = 0
     set_timeouts(page, crit)
+    from . import parallel
+    par = crit["parallel_applications"] = parallel.clamp(crit.get("parallel_applications", 1))     # 1 = one by one
+    if par > 1:
+        HOOKS["log"](f"⧉ Parallel mode: up to {par} applications at the same time, one browser tab each (LinkedIn). Set it to 1 to apply one by one.")
+        if "indeed" in sites: HOOKS["log"]("   ℹ Indeed offers are still handled one by one.")
+    logger.info(f"PARALLEL applications={par}")
     mode = crit.get("saved_jobs", "off")              # off | first (saved jobs, then search) | only
     if mode not in ("off", "first", "only"): mode = "off"
     li_blocked = False

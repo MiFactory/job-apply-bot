@@ -2,7 +2,7 @@ import re, urllib.parse
 from . import store, profile as P
 from . import popups
 from . import logger
-from .browser import human_check, pause_for_human, login_with_google, should_stop, HOOKS
+from .browser import human_check, goto, pause_for_human, login_with_google, should_stop, HOOKS
 from .formfiller import Filler, NeedInfo
 
 NEXT = re.compile(r"^(continue|continuer|suivant|next|volgende)", re.I)
@@ -14,12 +14,12 @@ def search_url(title, loc, crit, start=0):
     return f"https://{domain_for(loc)}/jobs?" + urllib.parse.urlencode({"q": title, "l": loc, "fromage": crit["posted_within_days"], "sort": "date", "start": start})
 
 def ensure_login(page, google_email=""):
-    page.goto("https://be.indeed.com/"); page.wait_for_timeout(2500); human_check(page, "Indeed")
+    goto(page, "https://be.indeed.com/"); page.wait_for_timeout(2500); human_check(page, "Indeed")
     if page.locator("a[href*='/account/login'], a[data-gnav-element-name='SignIn']").count():
         if google_email:
-            page.goto("https://secure.indeed.com/auth?hl=fr_BE"); page.wait_for_timeout(2500)
+            goto(page, "https://secure.indeed.com/auth?hl=fr_BE"); page.wait_for_timeout(2500)
             login_with_google(page, "Indeed", google_email)
-            page.goto("https://be.indeed.com/"); page.wait_for_timeout(2000)
+            goto(page, "https://be.indeed.com/"); page.wait_for_timeout(2000)
             if not page.locator("a[href*='/account/login'], a[data-gnav-element-name='SignIn']").count(): return
         pause_for_human("Indeed: please LOG IN in the browser window (the bot never handles your password).")
 
@@ -29,7 +29,7 @@ def run(page, profile, criteria, max_apps, dry_run, interactive, asker=None, mot
     for tq in criteria["titles"]:
         for loc in criteria["locations"]:
             for start in range(0, 60, 10):
-                page.goto(search_url(tq, loc, criteria, start)); page.wait_for_timeout(2000); human_check(page, "Indeed")
+                goto(page, search_url(tq, loc, criteria, start)); page.wait_for_timeout(2000); human_check(page, "Indeed")
                 cards = page.locator("div.job_seen_beacon, li div.cardOutline")
                 if cards.count() == 0: break
                 for i in range(cards.count()):

@@ -41,6 +41,7 @@ All files are per profile: `data/profiles/<name>/`. Examples with fictive data: 
 | `include_drafts` | `true` (default): saved-jobs runs also finish your LinkedIn drafts (*Brouillon*) |
 | `answer_timeout_seconds` | How long to wait for YOUR answer to an unknown form question before the bot answers from your CV (default 30; 0 = wait forever; GUI: *Wait for my answer*) |
 | `auto_answer` | `true` (default): answer unknown questions from CV / profile / earlier answers when you don't answer in time. Sensitive questions are never guessed. Guesses are listed as *auto* in `answers_auto.json` and orange in the GUI |
+| `parallel_applications` | How many applications are handled **at the same time**, each in its own browser tab (LinkedIn search results and saved jobs). `1` (default) = one by one; up to `10`. GUI: *Applications at the same time*; CLI: `--parallel` |
 | `timeout_seconds` | How long a click / page may wait before the job is skipped (default 15; GUI: *Timeout per click / page*; CLI: `--timeout`) |
 | `saved_jobs` | LinkedIn *Saved jobs*: `off` (default), `first` (saved jobs, then search) or `only` (GUI drop-down; CLI `--saved`) |
 | `unsave_after_apply` | Remove a saved job from your Saved list once applied (never in dry-run) |

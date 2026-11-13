@@ -14,7 +14,7 @@ die() { printf '\n!! %s\n' "$*" >&2; exit 1; }
 command -v git >/dev/null || die "git is not installed"
 
 VER=$(sed -n 's/^__version__ *= *"\([^"]*\)".*/\1/p' jobbot/__init__.py | head -n1); VER=${VER:-?}
-MSG=${1:-"v${VER} - fix location filter & wrongly skipped offers, 'Vérifier' button, radio options, CV step, Controls tab"}
+MSG=${1:-"v${VER} - several applications at the same time (parallel_applications 1..10, one tab per job)"}
 
 # ---- 0. keep private files out of git
 say "Checking .gitignore"

@@ -7,6 +7,6 @@ if (-not (git remote)) { git remote add origin $repo }
 git fetch origin
 git reset --soft origin/main
 git add -A
-git commit -m "v${ver} - default answers instead of skipping, new LinkedIn layout support, run log, radio option fix"
+git commit -m "v${ver} - several applications at the same time (parallel_applications 1..10, one tab per job)"
 git push origin main
 Write-Host "Done: v${ver}"

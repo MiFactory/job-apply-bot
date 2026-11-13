@@ -10,6 +10,7 @@
   "easy_apply_only": true,
   "min_score": 1,
   "max_applications_per_day": 40,
+  "parallel_applications": 1,
   "skip_languages": ["nl"],
   "location_must_contain": ["belg", "brussel", "bruxel", "wallon", "vlaan", "flan", "namur", "liège", "gent", "antwerp", "leuven"],
   "ask_user_when_unknown": true

@@ -4,6 +4,7 @@ from . import logger
 from .browser import human_check, pause_for_human, login_with_google, should_stop, HOOKS
 from .formfiller import Filler, NeedInfo
 from . import popups
+from . import parallel
 
 LIMIT_RE = re.compile(r"(daily|weekly|easy apply|application)s? limit|limit(e|s)? (has been |was )?reached|reached (the |your |today.s )?(daily |weekly )?(easy apply |application )?limit"
                       r"|limite (quotidienne|journalière|de candidatures|atteinte)|atteint (la|votre) limite|limiet (bereikt|van)|(dagelijkse|dagelijks) limiet|bereikt.{0,30}limiet", re.I)
@@ -193,18 +194,24 @@ def click_hard(page, btn):
     return False
 
 def easy_apply(page, filler, resume_path, dry_run):
+    """One application, start to end, on this page (one-by-one mode)."""
+    return parallel.drive(page, easy_apply_steps(page, filler, resume_path, dry_run))
+
+def easy_apply_steps(page, filler, resume_path, dry_run):
+    """The Easy Apply form as a task: every pause is yielded (milliseconds) instead of slept, so that with
+    «parallel_applications» > 1 the other tabs work during that pause. Returns (status, note)."""
     btn = find_apply_button(page)
     if btn is None: return "SKIP", "not Easy Apply"
     if not click_hard(page, btn): raise TimeoutError("apply button could not be clicked")
-    page.wait_for_timeout(1500)
+    yield 1500
     modal = page.locator("dialog[open], div[role=dialog], .jobs-easy-apply-modal").first      # new layout: native <dialog open>
     if not modal.count(): return "SKIP", "modal did not open"
     if LIMIT_RE.search(modal.inner_text()[:600]): raise LimitReached(modal.inner_text()[:200])
     waits = 0
     for _ in range(26):
-        BLOCKED.clear()
         filler.fill(modal, resume_path)
-        page.wait_for_timeout(400)
+        yield 400
+        BLOCKED.clear()                                                # after the pause: BLOCKED is shared by all the tabs
         # uncheck "follow company"
         for cb in modal.locator("input[type=checkbox]").all():
             try:
@@ -216,13 +223,13 @@ def easy_apply(page, filler, resume_path, dry_run):
             popups.dismiss_popups(page)
             return "DRY_RUN", "stopped before final submit"          # the Submit button is only LOOKED AT, never pressed
         if click_btn(modal, "submit"):
-            page.wait_for_timeout(2500)
+            yield 2500
             body = page.inner_text("body")
             if LIMIT_RE.search(body[:3000]): raise LimitReached("limit message after submit")
             popups.dismiss_popups(page)          # post-apply window + its "Supprimer de votre candidature ?" confirmation
             return "APPLIED", ""
         if click_btn(modal, "review") or click_btn(modal, "next"):
-            page.wait_for_timeout(900)
+            yield 900
             err = modal.locator(".artdeco-inline-feedback--error, [data-test-form-element-error-messages], [role=alert]")
             if err.count() and err.first.is_visible():
                 raise NeedInfo("form error: " + err.first.inner_text()[:120])
@@ -231,7 +238,7 @@ def easy_apply(page, filler, resume_path, dry_run):
         except Exception: only_dismiss = False
         if (BLOCKED or only_dismiss) and waits < 8:                                      # the button exists but is disabled: an upload / a required field is still being processed
             waits += 1; logger.info(f"WAIT {waits}/8: " + (f"button {BLOCKED} is disabled" if BLOCKED else "form still loading"))
-            page.wait_for_timeout(1500); continue
+            yield 1500; continue
         try: btns = [re.sub(r"\s+", " ", (b.inner_text() or b.get_attribute("aria-label") or "")).strip()[:25] for b in modal.locator("button").all() if b.is_visible()]
         except Exception: btns = []
         try: diag = modal.evaluate(DESCRIBE_JS)
@@ -302,6 +309,15 @@ def run(page, profile, criteria, max_apps, dry_run, interactive, asker=None, mot
                 n = cards.count()
                 HOOKS["log"](f"🔎 '{title_q}' / {loc} / page {start // 25 + 1}: {n} job card(s)" + ("" if n else f" — nothing found (page: {page.url[:90]})"))
                 if n == 0: break
+                par = parallel.clamp(criteria.get("parallel_applications", 1))
+                if par > 1:                                          # several tabs at once: read the cards, then open the jobs N by N
+                    todo = collect_cards(cards, n, seen)
+                    if todo is not None:
+                        d, ended = apply_parallel(page, todo, par, profile, criteria, max_apps - done, dry_run, interactive, asker, motivation, False, seen)
+                        done += d
+                        if ended: return done
+                        continue
+                    HOOKS["log"]("   ℹ job ids of this page could not be read — handling it one by one")
                 for i in range(n):
                     if should_stop(): HOOKS["result"] = "stopped"; HOOKS["log"]("⏹ stopped by user"); return done
                     if done >= max_apps or store.count_today() >= criteria["max_applications_per_day"]:
@@ -415,6 +431,10 @@ def run_saved(page, profile, criteria, max_apps, dry_run, interactive, asker=Non
         try:
             dr = [i for i in draft_job_ids(page) if i not in ids]; ids += dr; HOOKS["log"](f"📝 {len(dr)} draft application(s) found (started, not sent)")
         except Exception as e: HOOKS["log"]("   ⚠ could not read drafts: " + popups.friendly_error(e, criteria.get("timeout_seconds", 15)))
+    par = parallel.clamp(criteria.get("parallel_applications", 1))
+    if par > 1:
+        todo = [{"id": j, "card_txt": ""} for j in ids if ("linkedin", j) not in finished]
+        return apply_parallel(page, todo, par, profile, criteria, max_apps, dry_run, interactive, asker, motivation, True, finished)[0]
     for jid in ids:
         if should_stop(): HOOKS["result"] = "stopped"; HOOKS["log"]("⏹ stopped by user"); return done
         if done >= max_apps or store.count_today() >= criteria["max_applications_per_day"]:
@@ -455,3 +475,137 @@ def run_saved(page, profile, criteria, max_apps, dry_run, interactive, asker=Non
         except Exception as e:
             HOOKS["log"]("   ⚠ " + popups.friendly_error(e, criteria.get("timeout_seconds", 15))); popups.dismiss_popups(page); discard(page)
     return done
+
+
+# ---------------------------------------------------------------------------------------------- several applications at the same time
+APPLIED_CARD_RE = re.compile(r"candidature envoy|application sent|^applied|postulé", re.I | re.M)
+HUMAN_RE = re.compile(r"verify you are human|vérifiez que vous êtes humain|security check|contrôle de sécurité|just a moment", re.I)
+GUEST_TITLE_RE = re.compile(r"conditions g[ée]n[ée]rales|terms of service|user agreement|bienvenue dans votre communaut|welcome to your professional", re.I)
+
+def collect_cards(cards, n, seen):
+    """Jobs of a results page still to handle: [{"id", "card_txt"}]. None when a card has no real job id (then the page is done one by one)."""
+    todo = []
+    for i in range(n):
+        card = cards.nth(i); jid = card_id(card, i)
+        if not (jid.isdigit() and len(jid) >= 4): return None       # card_id fell back to the card's position: no /jobs/view/<id>/ address
+        if ("linkedin", jid) in seen: continue
+        try: card_txt = card.inner_text(timeout=1500)
+        except Exception: card_txt = ""
+        if APPLIED_CARD_RE.search(card_txt):
+            seen.add(("linkedin", jid)); HOOKS["log"](f"   ⏭ already applied: {card_txt.splitlines()[0][:60] if card_txt else jid}"); continue
+        todo.append({"id": jid, "card_txt": card_txt})
+    return todo
+
+def needs_human(page):
+    """'hard' = login / checkpoint address, 'soft' = a security-check text on the page, '' = a normal page."""
+    if blocked(page): return "hard"
+    try: return "soft" if HUMAN_RE.search(page.inner_text("body")[:2000]) else ""
+    except Exception: return ""
+
+def job_task(page, job, tab, profile, criteria, dry_run, interactive, asker, motivation, saved):
+    """One job in its own tab, as a task for parallel.run_tasks (pauses are yielded). Returns a dict: status, note, title, company, loc.
+    Same rules as the one-by-one loops: search filters for search results, none for saved jobs."""
+    jid = job["id"]; url = f"https://www.linkedin.com/jobs/view/{jid}/"; tag = f"[tab {tab}] "
+    r = {"status": "ERROR", "note": "", "title": "", "company": "", "loc": "", "url": url, "tag": tag}
+    def out(status, note=""): r.update(status=status, note=note); return r
+    try:
+        page.goto(url, wait_until="commit")                     # do not wait for the whole page: the other tabs start loading meanwhile
+        yield 2000
+        try: page.wait_for_load_state("domcontentloaded")
+        except Exception: pass
+        why = needs_human(page)
+        if why: return out("BLOCKED", why)
+        for _ in range(max(1, int(criteria.get("timeout_seconds", 15)) * 2)):       # wait for the job title without freezing the other tabs
+            if page.locator(".job-details-jobs-unified-top-card__job-title, h1, a[href*='/jobs/view/']").count(): break
+            yield 500
+        yield 1200
+        title, company, loc_txt, desc = read_detail(page)
+        r.update(title=title, company=company, loc=loc_txt)
+        if blocked(page) or GUEST_TITLE_RE.search(title or ""): return out("BLOCKED", "hard")
+        if not title.strip(): raise TimeoutError("job details did not load")
+        if company.lower() in [c.lower() for c in criteria["exclude_companies"]]:
+            return out("SKIPPED", ("saved: " if saved else "") + "excluded company")
+        if saved:
+            if CLOSED_RE.search(page.inner_text("body")[:6000]): return out("SKIPPED", "saved: no longer accepting applications")
+        else:
+            sc, note = P.score_job(title, desc, criteria)
+            if not loc_txt.strip():
+                loc_txt = next((l.strip() for l in job.get("card_txt", "").splitlines() if re.search(r"belg|bruxel|brussel|wallon|vlaan|flan|r[ée]gion|gewest", l, re.I)), ""); r["loc"] = loc_txt
+            if loc_txt.strip() and not P.location_ok(loc_txt, criteria): sc, note = 0, f"location outside target: {loc_txt}"
+            if sc < criteria["min_score"]: return out("SKIPPED", note)
+        lang = P.detect_lang(desc[:1500])
+        resume = profile["cv_files"].get(lang) or profile["cv_files"].get(profile["default_cv_lang"]) or ""
+        filler = Filler(profile, criteria, interactive, asker, motivation)          # one per tab: it carries the job's title / company
+        filler.ctx = {"title": title, "company": company, "lang": lang}
+        HOOKS["log"](f"{tag}→ {'⭐ ' if saved else ''}{title} @ {company} ({loc_txt}) cv={lang}"); logger.step("linkedin", f"{jid} {title} @ {company}", f"easy apply (tab {tab})")
+        try:
+            status, note = yield from easy_apply_steps(page, filler, resume, dry_run)
+        except NeedInfo as e:
+            store.log_pending("linkedin", title, company, e.question, url); discard(page)
+            return out("NEEDS_INFO", e.question)
+        if saved and status == "SKIP": status, note = "SKIPPED", "saved: not Easy Apply — apply on the company site"
+        if saved and status == "APPLIED":
+            note = "saved job"
+            if criteria.get("unsave_after_apply") and unsave_job(page): HOOKS["log"](f"{tag}   ☆ removed from Saved")
+        return out(status, note)
+    except LimitReached as e:
+        return out("LIMIT", str(e))
+    except GeneratorExit:
+        raise                                                    # the tab is being stopped (Stop button / LinkedIn limit in another tab)
+    except Exception as e:
+        detail = logger.error(f"linkedin.job_task tab {tab}", e, page)
+        HOOKS["log"](f"{tag}   ⚠ " + popups.friendly_error(e, criteria.get("timeout_seconds", 15)) + f"   → details in {logger.log_path().name}"); HOOKS["log"]("      " + detail)
+        try: popups.dismiss_popups(page); discard(page)
+        except Exception: pass
+        return out("ERROR", type(e).__name__)
+
+def apply_parallel(page, jobs, par, profile, criteria, max_apps, dry_run, interactive, asker, motivation, saved, seen):
+    """Handle `jobs` ([{"id", "card_txt"}]) `par` tabs at a time. Returns (applications done, ended):
+    ended=True means the run is over (stop / quota / LinkedIn limit / login needed) and HOOKS["result"] says why.
+    A batch never holds more tabs than what is left of the run / daily quota, so the caps cannot be exceeded."""
+    queue = list(jobs); done = 0; retried = set()
+    make = lambda pg, job, tab: job_task(pg, job, tab, profile, criteria, dry_run, interactive, asker, motivation, saved)
+    while queue:
+        if should_stop(): HOOKS["result"] = "stopped"; HOOKS["log"]("⏹ stopped by user"); return done, True
+        left_day = criteria["max_applications_per_day"] - store.count_today()
+        if done >= max_apps or left_day <= 0:
+            if left_day <= 0: HOOKS["result"] = "quota"
+            HOOKS["log"]("✅ daily/run quota reached"); return done, True
+        size = max(1, min(par, max_apps - done, left_day, len(queue)))
+        batch, queue = queue[:size], queue[size:]
+        popups.dismiss_popups(page)
+        HOOKS["log"](f"⧉ {len(batch)} application(s) at the same time ({len(queue)} more waiting)"); logger.info(f"PARALLEL batch={[j['id'] for j in batch]}")
+        results = parallel.run_tasks(page, batch, make, on_abort=discard, is_fatal=lambda r: isinstance(r, dict) and r.get("status") == "LIMIT")
+        again = []; limit = None; login = False
+        for job, r in results:
+            jid = job["id"]
+            if r is None: continue                                 # tab stopped half-way: nothing logged, the job is tried again next run
+            if isinstance(r, Exception):
+                logger.error("linkedin.apply_parallel", r); HOOKS["log"]("   ⚠ " + popups.friendly_error(r, criteria.get("timeout_seconds", 15))); seen.add(("linkedin", jid)); continue
+            st, note, tag = r["status"], r["note"], r["tag"]
+            if st == "LIMIT": limit = note; continue
+            if st == "BLOCKED":
+                if jid not in retried: retried.add(jid); again.append(job)
+                elif note == "hard": login = True
+                else: HOOKS["log"](f"{tag}⚠ job {jid}: the page still shows a security check — left for the next run")
+                continue
+            if st == "ERROR": seen.add(("linkedin", jid)); continue    # already explained in the log by the tab itself; not written to the CSV (retried next run)
+            store.log_application("linkedin", jid, r["title"], r["company"], r["loc"], r["url"], st, note)
+            if st == "SKIPPED":
+                HOOKS["log"](f"{tag}⏭ skipped: {r['title']} @ {r['company']} ({r['loc']}) — {note}")
+                if not saved or note.startswith("saved:"): seen.add(("linkedin", jid))
+                continue
+            HOOKS["log"](f"{tag}→ result: {st}" + (f" — {note}" if note else "") + f" · {r['title']} @ {r['company']}")
+            if not saved: seen.add(("linkedin", jid))
+            if st in ("APPLIED", "DRY_RUN"): done += 1; HOOKS["log"](f"{tag}✅ {'applied' if st == 'APPLIED' else 'ready to apply (dry run)'} ({done})")
+        if limit is not None:
+            HOOKS["result"] = "limit"; HOOKS["log"](f"🛑 LinkedIn limit reached: {limit}. Run stopped (a schedule retries automatically)."); return done, True
+        if should_stop(): HOOKS["result"] = "stopped"; HOOKS["log"]("⏹ stopped by user"); return done, True
+        if login:
+            HOOKS["log"]("⛔ LinkedIn is still on a login / security page — stopping this run. Log in with 🔑 LinkedIn, then start again."); HOOKS["result"] = "login"; return done, True
+        if again:                                                  # login / security check met in the tabs: ONE pause for the user, then those jobs are opened again
+            HOOKS["log"](f"   🔒 {len(again)} tab(s) met a login / security check")
+            ok = goto_checked(page, f"https://www.linkedin.com/jobs/view/{again[0]['id']}/"); human_check(page, "LinkedIn")
+            if not ok: HOOKS["log"]("⛔ LinkedIn session lost — log in with 🔑 LinkedIn and start again."); HOOKS["result"] = "login"; return done, True
+            queue = again + queue
+    return done, False
